@@ -1,4 +1,4 @@
-﻿#if UNITY_EDITOR
+#if UNITY_EDITOR
 using System;
 using System.Linq;
 using Microsoft.CodeAnalysis;
@@ -9,7 +9,8 @@ using GaconStudio.SynapseGraph.Runtime;
 namespace GaconStudio.SynapseGraph.Editor
 {
     /// <summary>
-    /// Phân tích Logic Trace nội hàm sử dụng Microsoft Roslyn AST (Abstract Syntax Tree).
+    /// Bộ xử lý phân tích logic nội hàm dựa trên cú pháp Roslyn AST.
+    /// Đã được nâng cấp để bắt mọi loại logic: Call, Event, New, Cast...
     /// </summary>
     public class RoslynASTProcessor : IClassProcessor
     {
@@ -50,69 +51,62 @@ namespace GaconStudio.SynapseGraph.Editor
             var invocations = body.DescendantNodes().OfType<InvocationExpressionSyntax>();
             foreach (var inv in invocations)
             {
-                string rawContext = inv.ToString();
-
-                if (inv.Expression is MemberAccessExpressionSyntax memberAccess)
-                {
-                    string caller = memberAccess.Expression.ToString();
-                    string methodName = memberAccess.Name.ToString();
-
-                    if (caller.Contains("ServiceLocator"))
-                    {
-                        AnalyzerUtility.AddDependency(mNode, "ServiceLocator", ExtractGenericType(caller), methodName, rawContext);
-                    }
-                    else if (caller.EndsWith(".Instance") || caller == "Instance")
-                    {
-                        string className = caller.Replace(".Instance", "");
-                        AnalyzerUtility.AddDependency(mNode, "Singleton", className, methodName, rawContext);
-                    }
-                    else if (caller == "Signal" || caller == "this" || caller.Contains("SignalHub"))
-                    {
-                        if (methodName == "Fire" || methodName == "Subscribe" || methodName == "Unsubscribe")
-                            AnalyzerUtility.AddDependency(mNode, "SignalEvent", "SignalHub", methodName, rawContext);
-                    }
-                    else if (caller != "Debug" && caller != "Mathf" && caller != "UnityEngine.Debug")
-                    {
-                        AnalyzerUtility.AddDependency(mNode, "LogicCall", caller, methodName, rawContext);
-                    }
-                }
-                else if (inv.Expression is IdentifierNameSyntax identifier)
-                {
-                    string methodName = identifier.Identifier.Text;
-                    AnalyzerUtility.AddDependency(mNode, "InternalCall", selfName, methodName, rawContext);
-                }
+                HandleInvocation(inv, mNode, selfName);
             }
 
             var creations = body.DescendantNodes().OfType<ObjectCreationExpressionSyntax>();
             foreach (var create in creations)
             {
-                string typeName = create.Type.ToString();
-                if (!typeName.StartsWith("List") && !typeName.StartsWith("Dictionary") && !typeName.StartsWith("IEnumerable"))
-                {
-                    AnalyzerUtility.AddDependency(mNode, "LocalInit", typeName, "Constructor", create.ToString());
-                }
+                AnalyzerUtility.AddDependency(mNode, "Instantiation", create.Type.ToString(), "Constructor", create.ToString());
             }
 
             var assignments = body.DescendantNodes().OfType<AssignmentExpressionSyntax>();
             foreach (var assign in assignments)
             {
-                if (assign.OperatorToken.IsKind(SyntaxKind.PlusEqualsToken))
+                if (assign.OperatorToken.IsKind(SyntaxKind.PlusEqualsToken) || assign.OperatorToken.IsKind(SyntaxKind.MinusEqualsToken))
                 {
-                    AnalyzerUtility.AddDependency(mNode, "EventSubscription", assign.Left.ToString(), "Subscribe", assign.ToString());
+                    string type = assign.OperatorToken.IsKind(SyntaxKind.PlusEqualsToken) ? "EventSubscribe" : "EventUnsubscribe";
+                    string target = GetRootIdentifier(assign.Left);
+                    AnalyzerUtility.AddDependency(mNode, type, target, assign.Left.ToString(), assign.ToString());
                 }
-                else if (assign.OperatorToken.IsKind(SyntaxKind.MinusEqualsToken))
-                {
-                    AnalyzerUtility.AddDependency(mNode, "EventUnsubscription", assign.Left.ToString(), "Unsubscribe", assign.ToString());
-                }
+            }
+
+            var casts = body.DescendantNodes().OfType<CastExpressionSyntax>();
+            foreach (var cast in casts)
+            {
+                AnalyzerUtility.AddDependency(mNode, "TypeCast", cast.Type.ToString(), "Cast", cast.ToString());
             }
         }
 
-        private string ExtractGenericType(string caller)
+        private void HandleInvocation(InvocationExpressionSyntax inv, MethodNode mNode, string selfName)
         {
-            int start = caller.IndexOf('<');
-            int end = caller.LastIndexOf('>');
-            if (start != -1 && end != -1) return caller.Substring(start + 1, end - start - 1);
-            return "Unknown";
+            string rawContext = inv.ToString();
+
+            if (inv.Expression is MemberAccessExpressionSyntax memberAccess)
+            {
+                string caller = memberAccess.Expression.ToString();
+                string methodName = memberAccess.Name.ToString();
+
+                if (caller == "Debug" || caller == "UnityEngine.Debug" || caller == "Mathf") return;
+
+                string depType = "LogicCall";
+                if (methodName == "AddListener" || methodName == "RemoveListener") depType = "UnityEventLink";
+                else if (methodName == "Invoke") depType = "SignalFire";
+                else if (caller.Contains("Instance") || caller.Contains("Service")) depType = "PatternAccess";
+
+                AnalyzerUtility.AddDependency(mNode, depType, GetRootIdentifier(memberAccess.Expression), methodName, rawContext);
+            }
+            else if (inv.Expression is IdentifierNameSyntax identifier)
+            {
+                AnalyzerUtility.AddDependency(mNode, "InternalCall", selfName, identifier.Identifier.Text, rawContext);
+            }
+        }
+
+        private string GetRootIdentifier(ExpressionSyntax expr)
+        {
+            string full = expr.ToString();
+            if (full.Contains(".")) return full.Split('.')[0];
+            return full;
         }
     }
 }
