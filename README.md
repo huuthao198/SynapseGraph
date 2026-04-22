@@ -12,12 +12,17 @@
 * **Unity Editor Integration**: Features a user-friendly editor window with drag-and-drop support for target folders.
 * **High-Speed Visualization**: Web-based renderer capable of handling complex projects with hundreds of interconnected nodes.
 
-## 📥 Installation (Unity Tool)
-To add this tool to your Unity project via the **Package Manager**:
-1. Click the **+** button in the top left corner.
-2. Select **Add package from git URL...**.
-3. Paste the following URL:
-   `https://github.com/huuthao198/SynapseGraph.git?path=/unity-tool`
+## 📥 Installation
+
+### Option 1: Via Git URL (Recommended)
+1. In Unity, open **Window > Package Manager**.
+2. Click **+** > **Add package from git URL...**.
+3. Paste: `https://github.com/huuthao198/SynapseGraph.git?path=/unity-tool`
+
+### Option 2: Via Tarball (.tgz)
+1. Download the `com.gaconstudio.synapsegraph-1.0.0.tgz` from the [Releases](https://github.com/huuthao198/SynapseGraph/releases) page.
+2. In Unity Package Manager, click **+** > **Add package from tarball...**.
+3. Select the downloaded file.
 
 ## 🌐 Live Demo (Web Visualizer)
 You can access the online visualizer here:
