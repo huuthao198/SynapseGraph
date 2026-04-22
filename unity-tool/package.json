@@ -1,6 +1,6 @@
 {
   "name": "com.gaconstudio.synapsegraph",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "displayName": "SynapseGraph",
   "description": "Trình xuất dữ liệu cấu trúc thần kinh (Neural Architecture Exporter) cho Unity. Chuyển đổi mã nguồn C# thành JSON data để dựng đồ thị.",
   "unity": "2021.3",
