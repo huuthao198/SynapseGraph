@@ -1,0 +1,38 @@
+# --- Unity Folders ---
+/[Uu]nity-[Tt]ool/[Ll]ibrary/
+/[Uu]nity-[Tt]ool/[Tt]emp/
+/[Uu]nity-[Tt]ool/[Oo]bj/
+/[Uu]nity-[Tt]ool/[Bb]uild/
+/[Uu]nity-[Tt]ool/[Bb]uilds/
+/[Uu]nity-[Tt]ool/[Ll]ogs/
+/[Uu]nity-[Tt]ool/[MemoryCaptures]/
+
+# --- Unity Generated Assets ---
+*.csproj
+*.sln
+*.suo
+*.tmp
+*.user
+*.userprefs
+*.pidb
+*.booproj
+*.svd
+*.pdb
+*.opendb
+*.IDB
+*.VC.db
+
+# --- Web Visualizer ---
+/[Ww]eb-[Vv]isualizer/node_modules/
+/[Ww]eb-[Vv]isualizer/.DS_Store
+.DS_Store
+Thumbs.db
+
+# --- OS generated files ---
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db

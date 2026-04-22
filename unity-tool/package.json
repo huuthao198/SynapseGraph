@@ -1,0 +1,20 @@
+{
+  "name": "com.gaconstudio.synapsegraph",
+  "version": "1.0.0",
+  "displayName": "SynapseGraph",
+  "description": "Trình xuất dữ liệu cấu trúc thần kinh (Neural Architecture Exporter) cho Unity. Chuyển đổi mã nguồn C# thành JSON data để dựng đồ thị.",
+  "unity": "2021.3",
+  "author": {
+    "name": "GaconStudio",
+    "email": "huuthao198@gmail.com",
+    "url": "https://github.com/huuthao198"
+  },
+  "keywords": [
+    "architecture",
+    "analyzer",
+    "graph",
+    "roslyn",
+    "gaconstudio"
+  ],
+  "category": "Tooling"
+}
