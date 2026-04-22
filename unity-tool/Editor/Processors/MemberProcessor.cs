@@ -6,9 +6,6 @@ using GaconStudio.SynapseGraph.Runtime;
 
 namespace GaconStudio.SynapseGraph.Editor
 {
-    /// <summary>
-    /// Bộ xử lý phân tích và bóc tách cấu trúc Fields, Properties, và Methods bằng Reflection.
-    /// </summary>
     public class MemberProcessor : IClassProcessor
     {
         public void Process(Type type, string path, string rawCode, ClassNode node)
@@ -37,12 +34,6 @@ namespace GaconStudio.SynapseGraph.Editor
                         Type = AnalyzerUtility.GetCleanTypeName(field.FieldType),
                         Name = field.Name
                     };
-
-                    var fAttrs = field.GetCustomAttributesData();
-                    foreach (var attr in fAttrs)
-                    {
-                        fNode.Attributes.Add(attr.AttributeType.Name.Replace("Attribute", ""));
-                    }
                     node.Fields.Add(fNode);
                 }
             }
@@ -53,35 +44,56 @@ namespace GaconStudio.SynapseGraph.Editor
             var properties = type.GetProperties(flags);
             foreach (var prop in properties)
             {
-                if (prop.Name != "Item" || prop.GetIndexParameters().Length == 0)
+                var pNode = new PropertyNode
                 {
-                    node.Properties.Add(new PropertyNode
-                    {
-                        Type = AnalyzerUtility.GetCleanTypeName(prop.PropertyType),
-                        Name = prop.Name,
-                        HasGetter = prop.CanRead,
-                        HasSetter = prop.CanWrite
-                    });
-                }
+                    Type = AnalyzerUtility.GetCleanTypeName(prop.PropertyType),
+                    Name = prop.Name,
+                    HasGetter = prop.CanRead,
+                    HasSetter = prop.CanWrite
+                };
+                node.Properties.Add(pNode);
             }
         }
 
         private void ExtractMethods(Type type, BindingFlags flags, ClassNode node)
         {
             var methods = type.GetMethods(flags);
-            foreach (var method in methods)
+            
+            Dictionary<MethodInfo, string> interfaceMapping = new Dictionary<MethodInfo, string>();
+            foreach (Type iface in type.GetInterfaces())
             {
-                if (method.Name.Contains("<") || method.IsSpecialName) continue;
-
-                MethodNode mNode = new MethodNode
+                try
                 {
-                    Access = AnalyzerUtility.GetAccessModifier(method),
-                    Modifiers = AnalyzerUtility.GetMethodTraits(method),
-                    ReturnType = AnalyzerUtility.GetCleanTypeName(method.ReturnType),
-                    Name = AnalyzerUtility.GetMethodSignature(method)
+                    var map = type.GetInterfaceMap(iface);
+                    for (int i = 0; i < map.TargetMethods.Length; i++)
+                    {
+                        if (!interfaceMapping.ContainsKey(map.TargetMethods[i]))
+                        {
+                            interfaceMapping.Add(map.TargetMethods[i], iface.Name);
+                        }
+                    }
+                }
+                catch { }
+            }
+
+            foreach (var m in methods)
+            {
+                if (m.IsSpecialName || m.DeclaringType != type) continue;
+
+                var mNode = new MethodNode
+                {
+                    Access = AnalyzerUtility.GetAccessModifier(m),
+                    Modifiers = AnalyzerUtility.GetMethodTraits(m),
+                    ReturnType = AnalyzerUtility.GetCleanTypeName(m.ReturnType),
+                    Name = AnalyzerUtility.GetMethodSignature(m)
                 };
 
-                foreach (var p in method.GetParameters())
+                if (interfaceMapping.TryGetValue(m, out string interfaceName))
+                {
+                    mNode.ImplementedInterface = interfaceName;
+                }
+
+                foreach (var p in m.GetParameters())
                 {
                     mNode.Parameters.Add(new ParameterNode
                     {

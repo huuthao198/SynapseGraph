@@ -1,4 +1,4 @@
-#if UNITY_EDITOR
+﻿#if UNITY_EDITOR
 using System;
 using System.Linq;
 using Microsoft.CodeAnalysis;
@@ -8,10 +8,6 @@ using GaconStudio.SynapseGraph.Runtime;
 
 namespace GaconStudio.SynapseGraph.Editor
 {
-    /// <summary>
-    /// Bộ xử lý phân tích logic nội hàm dựa trên cú pháp Roslyn AST.
-    /// Đã được nâng cấp để bắt mọi loại logic: Call, Event, New, Cast...
-    /// </summary>
     public class RoslynASTProcessor : IClassProcessor
     {
         public void Process(Type type, string path, string rawCode, ClassNode node)
@@ -34,48 +30,36 @@ namespace GaconStudio.SynapseGraph.Editor
 
                 if (methodSyntax != null && methodSyntax.Body != null)
                 {
-                    ParseMethodBodyLogic(methodSyntax.Body, mNode, node.Name);
+                    var invocations = methodSyntax.DescendantNodes().OfType<InvocationExpressionSyntax>().ToList();
+
+                    foreach (var inv in invocations)
+                    {
+                        HandleInvocation(inv, mNode, pureClassName);
+                        ExtractSignals(inv, mNode);
+                    }
+
+                    var creations = methodSyntax.DescendantNodes().OfType<ObjectCreationExpressionSyntax>();
+                    foreach (var creation in creations)
+                    {
+                        string targetType = creation.Type.ToString();
+                        string rawContext = creation.ToString();
+                        AnalyzerUtility.AddDependency(mNode, "Instantiation", targetType, "Constructor", rawContext);
+                    }
+
+                    var assignments = methodSyntax.DescendantNodes().OfType<AssignmentExpressionSyntax>();
+                    foreach (var assignment in assignments)
+                    {
+                        ExtractMutations(assignment, mNode);
+                    }
                 }
             }
         }
 
-        private bool IsMatch(BaseMethodDeclarationSyntax syntax, string reflectionName)
+        private bool IsMatch(BaseMethodDeclarationSyntax syntax, string signature)
         {
-            if (syntax is MethodDeclarationSyntax m) return reflectionName.StartsWith(m.Identifier.Text);
-            if (syntax is ConstructorDeclarationSyntax c) return reflectionName == c.Identifier.Text || reflectionName == "Constructor";
+            if (syntax is MethodDeclarationSyntax m) return signature.StartsWith(m.Identifier.Text);
+            if (syntax is ConstructorDeclarationSyntax c) return signature.StartsWith(c.Identifier.Text);
             return false;
-        }
-
-        private void ParseMethodBodyLogic(BlockSyntax body, MethodNode mNode, string selfName)
-        {
-            var invocations = body.DescendantNodes().OfType<InvocationExpressionSyntax>();
-            foreach (var inv in invocations)
-            {
-                HandleInvocation(inv, mNode, selfName);
-            }
-
-            var creations = body.DescendantNodes().OfType<ObjectCreationExpressionSyntax>();
-            foreach (var create in creations)
-            {
-                AnalyzerUtility.AddDependency(mNode, "Instantiation", create.Type.ToString(), "Constructor", create.ToString());
-            }
-
-            var assignments = body.DescendantNodes().OfType<AssignmentExpressionSyntax>();
-            foreach (var assign in assignments)
-            {
-                if (assign.OperatorToken.IsKind(SyntaxKind.PlusEqualsToken) || assign.OperatorToken.IsKind(SyntaxKind.MinusEqualsToken))
-                {
-                    string type = assign.OperatorToken.IsKind(SyntaxKind.PlusEqualsToken) ? "EventSubscribe" : "EventUnsubscribe";
-                    string target = GetRootIdentifier(assign.Left);
-                    AnalyzerUtility.AddDependency(mNode, type, target, assign.Left.ToString(), assign.ToString());
-                }
-            }
-
-            var casts = body.DescendantNodes().OfType<CastExpressionSyntax>();
-            foreach (var cast in casts)
-            {
-                AnalyzerUtility.AddDependency(mNode, "TypeCast", cast.Type.ToString(), "Cast", cast.ToString());
-            }
         }
 
         private void HandleInvocation(InvocationExpressionSyntax inv, MethodNode mNode, string selfName)
@@ -99,6 +83,39 @@ namespace GaconStudio.SynapseGraph.Editor
             else if (inv.Expression is IdentifierNameSyntax identifier)
             {
                 AnalyzerUtility.AddDependency(mNode, "InternalCall", selfName, identifier.Identifier.Text, rawContext);
+            }
+        }
+
+        private void ExtractMutations(AssignmentExpressionSyntax assignment, MethodNode mNode)
+        {
+            string fieldName = "";
+            if (assignment.Left is IdentifierNameSyntax id)
+                fieldName = id.Identifier.Text;
+            else if (assignment.Left is MemberAccessExpressionSyntax ma)
+                fieldName = ma.Name.Identifier.Text;
+
+            if (!string.IsNullOrEmpty(fieldName) && !mNode.MutatedFields.Contains(fieldName))
+            {
+                mNode.MutatedFields.Add(fieldName);
+            }
+        }
+
+        private void ExtractSignals(InvocationExpressionSyntax inv, MethodNode mNode)
+        {
+            if (inv.Expression is MemberAccessExpressionSyntax memberAccess)
+            {
+                if (memberAccess.Name is GenericNameSyntax genericName && genericName.Identifier.Text == "Fire")
+                {
+                    var typeArg = genericName.TypeArgumentList.Arguments.FirstOrDefault();
+                    if (typeArg != null)
+                    {
+                        string signalName = typeArg.ToString();
+                        if (!mNode.FiredSignals.Contains(signalName))
+                        {
+                            mNode.FiredSignals.Add(signalName);
+                        }
+                    }
+                }
             }
         }
 
