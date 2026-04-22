@@ -28,7 +28,7 @@ function handleFile(file) {
     reader.readAsText(file);
 }
 
-// ================= STATS & COLOR LOGIC (V4) =================
+// ================= STATS & COLOR LOGIC =================
 function updateStatistics(data) {
     let totalClasses = data.Classes.length;
     let totalDeps = 0;
@@ -74,10 +74,37 @@ function renderForceGraph(data) {
             if (!method.MethodDependencies) return;
             method.MethodDependencies.forEach(dep => {
                 if (data.Classes.find(c => c.Name === dep.TargetClass)) {
-                    gData.links.push({ source: cls.Name, target: dep.TargetClass, label: method.Name });
+                    gData.links.push({ source: cls.Name, target: dep.TargetClass, label: method.Name, type: 'LogicCall' });
                 }
             });
         });
+    });
+
+    // SMART TRACKING LINKS
+    data.Classes.forEach(cls => {
+        if (cls.Interfaces && cls.Interfaces.length > 0) {
+            cls.Interfaces.forEach(iface => {
+                if (!gData.nodes.find(n => n.id === iface)) {
+                    gData.nodes.push({ id: iface, name: iface, colorGroup: "#b5cea8", details: { Kind: "Interface", Name: iface, Namespace: "System/Unity" } });
+                }
+                gData.links.push({ source: cls.Name, target: iface, type: 'Implements' });
+            });
+        }
+        if (cls.Methods && cls.Methods.length > 0) {
+            cls.Methods.forEach(method => {
+                if (method.FiredSignals && method.FiredSignals.length > 0) {
+                    method.FiredSignals.forEach(sig => {
+                        if (!gData.nodes.find(n => n.id === sig)) {
+                            gData.nodes.push({ id: sig, name: sig, colorGroup: "#ff55ff", details: { Kind: "Signal", Name: sig, Namespace: "EventSystem" } });
+                        }
+                        const exists = gData.links.find(l => l.source === cls.Name && l.target === sig && l.type === 'FiresSignal');
+                        if (!exists) {
+                            gData.links.push({ source: cls.Name, target: sig, type: 'FiresSignal' });
+                        }
+                    });
+                }
+            });
+        }
     });
 
     const rect = canvasWrapper.getBoundingClientRect();
@@ -89,7 +116,6 @@ function renderForceGraph(data) {
         .nodeColor(node => node.id === activeNodeId ? '#fff' : node.colorGroup) 
         .nodeCanvasObject((node, ctx, globalScale) => {
             const isHighlight = node.id === activeNodeId;
-            // BỔ SUNG V5: Lấy kích thước Node từ Slider
             const baseSize = parseInt(document.getElementById('slider-nodesize').value) || 5;
             const size = isHighlight ? baseSize * 1.5 : baseSize;
             
@@ -108,9 +134,18 @@ function renderForceGraph(data) {
                 ctx.fillText(node.name, node.x, node.y + size + 2);
             }
         })
-        .linkColor(link => (activeNodeId && (link.source.id === activeNodeId || link.target.id === activeNodeId)) ? '#e5c07b' : '#30363d')
+        .linkColor(link => {
+            if (activeNodeId && (link.source.id === activeNodeId || link.target.id === activeNodeId)) return '#e5c07b';
+            if (link.type === 'FiresSignal') return '#ff55ff'; 
+            if (link.type === 'Implements') return '#b5cea8';
+            return '#30363d';
+        })
         .linkWidth(link => (activeNodeId && (link.source.id === activeNodeId || link.target.id === activeNodeId)) ? 2 : 1)
-        .linkDirectionalParticles(link => (activeNodeId && (link.source.id === activeNodeId || link.target.id === activeNodeId)) ? 4 : 2)
+        .linkDirectionalParticles(link => {
+            if (activeNodeId && (link.source.id === activeNodeId || link.target.id === activeNodeId)) return 4;
+            if (link.type === 'FiresSignal') return 3;
+            return 2;
+        })
         .linkDirectionalParticleSpeed(0.005)
         .onNodeClick((node, event) => {
             focusNode(node.id);
@@ -119,10 +154,9 @@ function renderForceGraph(data) {
         .onBackgroundClick(() => {
             activeNodeId = null;
             document.getElementById('quick-tooltip').style.display = 'none';
-            // Cập nhật lại UI graph
             if(graph) {
                 const currentFunc = graph.nodeCanvasObject();
-                graph.nodeCanvasObject(currentFunc); // Force redraw
+                graph.nodeCanvasObject(currentFunc); 
                 graph.linkColor(graph.linkColor()).linkWidth(graph.linkWidth()).linkDirectionalParticles(graph.linkDirectionalParticles());
             }
         });
@@ -134,7 +168,7 @@ function renderForceGraph(data) {
     });
 }
 
-// ================= GRAPH SETTINGS (V5 UPDATE) =================
+// ================= GRAPH SETTINGS =================
 const repelSlider = document.getElementById('slider-repel');
 const distSlider = document.getElementById('slider-distance');
 const nodeSizeSlider = document.getElementById('slider-nodesize');
@@ -150,7 +184,6 @@ distSlider.addEventListener('input', e => {
 });
 nodeSizeSlider.addEventListener('input', e => {
     document.getElementById('val-nodesize').innerText = e.target.value;
-    // BỔ SUNG V5: Force redraw canvas ngay khi kéo size
     if(graph) {
         const currentFunc = graph.nodeCanvasObject();
         graph.nodeCanvasObject(currentFunc);
@@ -168,6 +201,11 @@ function applyGraphSettings() {
 }
 
 // ================= QUICK TOOLTIP =================
+window.closeTooltip = function(e) {
+    if(e) e.stopPropagation(); 
+    document.getElementById('quick-tooltip').style.display = 'none';
+}
+
 function showQuickTooltip(node) {
     const tooltip = document.getElementById('quick-tooltip');
     const cls = node.details;
@@ -178,10 +216,13 @@ function showQuickTooltip(node) {
     tooltip.style.display = 'block';
 
     tooltip.innerHTML = `
-        <h4>${cls.Kind || 'Class'} ${cls.Name}</h4>
-        <div class="t-row"><b>Namespace:</b> <span class="t-val">${cls.Namespace}</span></div>
+        <div style="display:flex; justify-content:space-between; align-items:flex-start;">
+            <h4 style="margin:0; padding-right:20px; color:#569cd6; font-size:14px;">${cls.Kind || 'Class'} ${cls.Name}</h4>
+            <div style="cursor:pointer; color:#e06c75; font-size:14px; font-weight:bold; line-height:1;" onclick="closeTooltip(event)">✕</div>
+        </div>
+        <div class="t-row" style="margin-top:8px;"><b>Namespace:</b> <span class="t-val">${cls.Namespace}</span></div>
         <div class="t-row"><b>BaseClass:</b> <span class="t-val">${cls.BaseClass || 'None'}</span></div>
-        <div class="t-row" style="margin-top:5px; font-style:italic; color:#858585;">(Xem chi tiết ở Inspector)</div>
+        <div class="t-row" style="margin-top:5px; font-style:italic; color:#858585; font-size:11px;">(Xem chi tiết ở Inspector)</div>
     `;
 }
 
@@ -222,7 +263,7 @@ function buildFileTree(classes) {
     });
 }
 
-// ================= FOCUS & INSPECTOR (V5 DEEP VIEW) =================
+// ================= FOCUS & INSPECTOR (WITH COLLAPSIBLE) =================
 window.focusNode = function(clsName) {
     if (!graph) return;
     activeNodeId = clsName;
@@ -239,11 +280,35 @@ window.focusNode = function(clsName) {
     }
 }
 
-// BỔ SUNG V5: HÀM INSPECTOR CỰC KỲ CHI TIẾT
+// [NEW] Hàm Helper tạo Component Cuộn (Accordion)
+function buildCollapsibleSection(title, contentHtml, isOpen = false) {
+    if (!contentHtml || contentHtml.includes('Không có')) {
+        // Nếu không có data, in ra mờ nhạt, không cho click cuộn
+        return `
+        <div class="inspect-section">
+            <div class="inspect-title" style="color:#858585; cursor:default;">
+                <span style="display:inline-block; width:10px;"></span> ${title}
+            </div>
+            <div class="inspect-row" style="color:#858585; padding-left:15px; margin-top:5px;">Trống</div>
+        </div>`;
+    }
+
+    const activeClass = isOpen ? 'active' : '';
+    const openClass = isOpen ? 'open' : '';
+    return `
+    <div class="inspect-section">
+        <div class="inspect-title inspect-header ${activeClass}" onclick="this.classList.toggle('active'); this.nextElementSibling.classList.toggle('open');">
+            <span class="inspect-caret">▶</span> ${title}
+        </div>
+        <div class="inspect-content ${openClass}">
+            ${contentHtml}
+        </div>
+    </div>`;
+}
+
 function updateInspector(cls) {
     const ins = document.getElementById('node-inspector');
     
-    // Xử lý Arrays an toàn (tránh lỗi null nếu JSON thiếu data)
     const traits = cls.Traits || [];
     const attributes = cls.Attributes || [];
     const interfaces = cls.Interfaces || [];
@@ -253,31 +318,69 @@ function updateInspector(cls) {
     const methods = cls.Methods || [];
     const enumValues = cls.EnumValues || [];
 
-    // Render HTML components
-    let traitsHtml = traits.length > 0 ? `<div class="inspect-row">` + traits.map(t => `<span class="tag tag-trait">${t}</span>`).join(' ') + `</div>` : '';
-    let attrHtml = attributes.length > 0 ? attributes.map(a => `<div class="inspect-row"><span class="tag tag-attr">[${a}]</span></div>`).join('') : '';
-    let usingsHtml = usings.length > 0 ? `<div class="inspect-section"><div class="inspect-title">📑 Usings</div>` + usings.map(u => `<div class="using-item">using ${u};</div>`).join('') + `</div>` : '';
-    let ifaceHtml = interfaces.length > 0 ? interfaces.join(', ') : 'None';
-
-    let enumHtml = '';
-    if (cls.Kind === "Enum" && enumValues.length > 0) {
-        enumHtml = `<div class="inspect-section"><div class="inspect-title">🔢 Enum Values</div>` + enumValues.map(e => `<div class="inspect-row">- ${e}</div>`).join('') + `</div>`;
+    // --- Build Dữ liệu các khối ---
+    let couplingHtml = '';
+    if (cls.BaseClass && cls.BaseClass !== "None" && cls.BaseClass !== "Object") {
+        couplingHtml += `<div class="inspect-row" style="color:#e5c07b; margin-top:5px;">🔗 Kế thừa (Inherits): <b>${cls.BaseClass}</b></div>`;
+    }
+    if (interfaces.length > 0) {
+        interfaces.forEach(i => { couplingHtml += `<div class="inspect-row" style="color:#b5cea8;">⚡ Thực thi (Implements): <b>${i}</b></div>`; });
     }
 
-    let fieldsHtml = fields.length > 0 ? fields.map(f => `<div class="inspect-row">- <span class="tag">${f.Type}</span> ${f.Name}</div>`).join('') : '<div class="inspect-row" style="color:#858585">Không có Fields</div>';
-    let propsHtml = properties.length > 0 ? properties.map(p => `<div class="inspect-row">- <span class="tag">${p.Type}</span> ${p.Name} <span style="color:#858585; font-size:10px;">[${p.HasSetter ? 'get, set' : 'get'}]</span></div>`).join('') : '<div class="inspect-row" style="color:#858585">Không có Properties</div>';
+    let usingsHtml = usings.length > 0 ? usings.map(u => `<div class="using-item">using ${u};</div>`).join('') : '';
+    let enumHtml = (cls.Kind === "Enum" && enumValues.length > 0) ? enumValues.map(e => `<div class="inspect-row">- ${e}</div>`).join('') : '';
+    let fieldsHtml = fields.length > 0 ? fields.map(f => `<div class="inspect-row">- <span class="tag">${f.Type}</span> ${f.Name}</div>`).join('') : '';
+    let propsHtml = properties.length > 0 ? properties.map(p => `<div class="inspect-row">- <span class="tag">${p.Type}</span> ${p.Name} <span style="color:#858585; font-size:10px;">[${p.HasSetter ? 'get, set' : 'get'}]</span></div>`).join('') : '';
     
     let methodsHtml = methods.length > 0 ? methods.map(m => {
-        let deps = (m.MethodDependencies || []).map(d => `
-            <div style="margin-left:10px; color:#c678dd; font-size: 11px;">↳ Gọi <b>${d.TargetClass}</b>.${d.TargetMethod}()</div>
-            ${d.RawContext ? `<div class="raw-context">${d.RawContext}</div>` : ''}
-        `).join('');
-        return `<div class="inspect-row" style="margin-top:10px; border-left: 2px solid #3e3e42; padding-left: 8px;"><b>${m.Name}()</b> : ${m.ReturnType}<br/>${deps}</div>`;
-    }).join('') : '<div class="inspect-row" style="color:#858585">Không có Methods</div>';
+        let deps = (m.MethodDependencies || []).map(d => {
+            let dColor = d.DependencyType === 'SignalFire' ? '#ff55ff' : '#4ec9b0';
+            let safeContext = d.RawContext ? d.RawContext.replace(/</g, "&lt;").replace(/>/g, "&gt;") : ''; 
 
-    // Ráp thành Layout tổng
-    ins.innerHTML = `
-        <div class="inspect-section">
+            couplingHtml += `
+            <div class="inspect-row" style="margin-top:6px; padding-left:8px; border-left:2px solid ${dColor}; background:rgba(0,0,0,0.15); padding-top:6px; padding-bottom:6px; border-radius: 0 4px 4px 0;">
+                <span style="color:#858585; font-size:11px;">[${d.DependencyType}]</span> tại hàm <b>${m.Name}()</b><br/>
+                ↳ Gọi tới: <span style="color:${dColor};">${d.TargetClass}.${d.TargetMethod}()</span>
+                ${safeContext ? `<div style="color:#d19a66; font-size:11px; margin-top:4px; font-family:monospace; background:#1e1e1e; padding:4px; border-radius:3px; word-break: break-all;">${safeContext}</div>` : ''}
+            </div>`;
+
+            return `
+            <div style="margin-left:10px; color:#c678dd; font-size: 11px;">↳ Gọi <b>${d.TargetClass}</b>.${d.TargetMethod}()</div>
+            ${safeContext ? `<div class="raw-context" style="font-family:monospace; font-size:10px; color:#d19a66; margin-left:10px; padding:2px 4px; background:#1e1e1e; border-radius:2px; word-break: break-all;">${safeContext}</div>` : ''}
+            `;
+        }).join('');
+
+        if (m.FiredSignals && m.FiredSignals.length > 0) {
+            m.FiredSignals.forEach(sig => {
+                couplingHtml += `
+                <div class="inspect-row" style="margin-top:6px; padding-left:8px; border-left:2px solid #ff55ff; background:rgba(0,0,0,0.15); padding-top:6px; padding-bottom:6px; border-radius: 0 4px 4px 0;">
+                    <span style="color:#858585; font-size:11px;">[FiresSignal]</span> tại hàm <b>${m.Name}()</b><br/>
+                    ↳ Bắn sự kiện: <span style="color:#ff55ff;">${sig}</span>
+                </div>`;
+            });
+        }
+
+        let smartDataHtml = '';
+        if (m.ImplementedInterface) smartDataHtml += `<div style="color:#b5cea8; font-size:11px; margin-top:4px; margin-left:10px;">⚡ Map: <b>${m.ImplementedInterface}</b></div>`;
+        if (m.MutatedFields && m.MutatedFields.length > 0) smartDataHtml += `<div style="color:#d19a66; font-size:11px; margin-top:2px; margin-left:10px;">✍️ Ghi: <b>${m.MutatedFields.join(', ')}</b></div>`;
+        if (m.FiredSignals && m.FiredSignals.length > 0) smartDataHtml += `<div style="color:#ff55ff; font-size:11px; margin-top:2px; margin-left:10px;">📡 Phát: <b>${m.FiredSignals.join(', ')}</b></div>`;
+
+        return `<div class="inspect-row" style="margin-top:10px; border-left: 2px solid #3e3e42; padding-left: 8px;">
+            <b>${m.Name}()</b> : <span style="color:#569cd6">${m.ReturnType}</span>
+            ${smartDataHtml}
+            ${deps}
+        </div>`;
+    }).join('') : '';
+
+    if (couplingHtml === '') couplingHtml = '<div class="inspect-row" style="color:#858585; padding-left:15px; margin-top:5px;">Isolated Node (Không có liên kết đi ra)</div>';
+
+    // --- Build Khối Core Info (Luôn hiện ở trên cùng) ---
+    let traitsHtml = traits.length > 0 ? `<div class="inspect-row">` + traits.map(t => `<span class="tag tag-trait">${t}</span>`).join(' ') + `</div>` : '';
+    let attrHtml = attributes.length > 0 ? attributes.map(a => `<div class="inspect-row"><span class="tag tag-attr">[${a}]</span></div>`).join('') : '';
+    let ifaceHtml = interfaces.length > 0 ? interfaces.join(', ') : 'None';
+
+    let coreInfoHtml = `
+        <div class="inspect-section" style="border-bottom:none;">
             ${attrHtml}
             ${traitsHtml}
             <div class="inspect-title" style="margin-top:5px; font-size:16px; color:#fff;">${cls.Kind || 'Class'} ${cls.Name}</div>
@@ -286,21 +389,18 @@ function updateInspector(cls) {
             <div class="inspect-row" style="margin-top:8px;"><b>BaseClass:</b> <span style="color:#e5c07b">${cls.BaseClass || 'None'}</span></div>
             <div class="inspect-row"><b>Interfaces:</b> <span style="color:#b5cea8">${ifaceHtml}</span></div>
         </div>
-        
-        ${usingsHtml}
-        ${enumHtml}
+    `;
 
-        <div class="inspect-section">
-            <div class="inspect-title">📦 Fields</div>
-            ${fieldsHtml}
-        </div>
-        <div class="inspect-section">
-            <div class="inspect-title">⚙️ Properties</div>
-            ${propsHtml}
-        </div>
-        <div class="inspect-section">
-            <div class="inspect-title">⚡ Methods & Logic Trace</div>
-            ${methodsHtml}
-        </div>
+    // --- Ráp toàn bộ lại bằng tính năng Cuộn ---
+    // Cấu hình: Coupling (Mở), Usings (Đóng), Fields (Đóng), Properties (Đóng), Methods (Mở)
+    ins.innerHTML = `
+        ${coreInfoHtml}
+        <hr style="border-color:#444; margin-bottom:15px;">
+        ${buildCollapsibleSection('🔗 Coupling & Relational Matrix', couplingHtml, true)}
+        ${buildCollapsibleSection('📑 Usings', usingsHtml, false)}
+        ${cls.Kind === "Enum" ? buildCollapsibleSection('🔢 Enum Values', enumHtml, true) : ''}
+        ${buildCollapsibleSection('📦 Fields', fieldsHtml, false)}
+        ${buildCollapsibleSection('⚙️ Properties', propsHtml, false)}
+        ${buildCollapsibleSection('⚡ Methods & Logic Trace', methodsHtml, true)}
     `;
 }

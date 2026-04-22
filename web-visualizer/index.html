@@ -38,19 +38,19 @@
                 <div class="settings-title">⚙️ Graph Settings & Legend</div>
                 
                 <label class="setting-item">
-                    Kích thước Node: <span id="val-nodesize">5</span>
-                    <input type="range" id="slider-nodesize" min="2" max="20" value="5">
+                    Kích thước Node: <span id="val-nodesize">15</span>
+                    <input type="range" id="slider-nodesize" min="2" max="20" value="15">
                 </label>
                 <label class="setting-item">
                     Lực đẩy (Repel): <span id="val-repel">300</span>
                     <input type="range" id="slider-repel" min="50" max="1000" value="300">
                 </label>
                 <label class="setting-item">
-                    Khoảng cách dây: <span id="val-distance">50</span>
-                    <input type="range" id="slider-distance" min="10" max="300" value="50">
+                    Khoảng cách dây: <span id="val-distance">100</span>
+                    <input type="range" id="slider-distance" min="10" max="300" value="100">
                 </label>
                 <label class="setting-item">
-                    <input type="checkbox" id="check-labels" checked> Hiện tên Node
+                    <input type="checkbox" id="check-labels" checked> Show Name Node
                 </label>
 
                 <hr style="border-color: #444; margin: 10px 0;">
@@ -63,6 +63,7 @@
                 <div class="legend-item"><span class="color-box" style="background:#d19a66"></span> Struct</div>
                 <div class="legend-item"><span class="color-box" style="background:#b5cea8"></span> Interface</div>
                 <div class="legend-item"><span class="color-box" style="background:#abb2bf"></span> Pure C# Class</div>
+                <div class="legend-item"><span class="color-box" style="background:#ff55ff"></span> Signal / Event Tracking</div>
             </div>
 
             <div id="quick-tooltip" class="quick-tooltip"></div>

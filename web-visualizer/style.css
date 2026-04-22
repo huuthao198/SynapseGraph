@@ -18,7 +18,7 @@ body { margin: 0; height: 100vh; display: flex; flex-direction: column; backgrou
 
 /* --- Sidebars --- */
 .sidebar { width: 300px; background: var(--bg-panel); border-right: 1px solid var(--border-color); display: flex; flex-direction: column; z-index: 5; }
-.right-sidebar { border-right: none; border-left: 1px solid var(--border-color); width: 400px; /* Nới rộng một chút cho Inspector V5 */ }
+.right-sidebar { border-right: none; border-left: 1px solid var(--border-color); width: 400px; }
 .sidebar-header { padding: 10px 15px; background: #2d2d2d; font-weight: bold; font-size: 13px; text-transform: uppercase; }
 .tree-container, .inspector-container { padding: 15px; overflow-y: auto; flex: 1; font-size: 13px; }
 .empty-state { color: var(--text-muted); text-align: center; margin-top: 50px; font-style: italic; }
@@ -64,3 +64,12 @@ body { margin: 0; height: 100vh; display: flex; flex-direction: column; backgrou
 .tag-trait { color: #d19a66; background: #2b221a; border-color: #59442f;}
 .raw-context { background: #111; padding: 6px; border-radius: 4px; color: #c678dd; font-family: monospace; font-size: 11px; margin-top: 4px; overflow-x: auto; white-space: nowrap; border: 1px solid #333;}
 .using-item { color: #9cdcfe; font-family: monospace; font-size: 11px; margin-left: 10px;}
+
+/* --- Inspector Collapsible (NEW) --- */
+.inspect-header { cursor: pointer; user-select: none; transition: opacity 0.2s; }
+.inspect-header:hover { opacity: 0.8; }
+.inspect-caret { display: inline-block; font-size: 10px; transition: transform 0.2s; color: #858585; margin-right: 5px; }
+.inspect-header.active .inspect-caret { transform: rotate(90deg); color: var(--highlight); }
+.inspect-content { display: none; margin-top: 8px; animation: slideDown 0.2s ease-out; }
+.inspect-content.open { display: block; }
+@keyframes slideDown { from { opacity: 0; transform: translateY(-5px); } to { opacity: 1; transform: translateY(0); } }
