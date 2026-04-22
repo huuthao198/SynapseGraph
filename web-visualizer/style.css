@@ -1,0 +1,66 @@
+:root {
+    --bg-dark: #1e1e1e; --bg-panel: #252526; --border-color: #3e3e42;
+    --text-main: #d4d4d4; --text-muted: #858585; --primary: #007acc;
+    --highlight: #e5c07b;
+}
+
+body { margin: 0; height: 100vh; display: flex; flex-direction: column; background-color: var(--bg-dark); color: var(--text-main); font-family: 'Segoe UI', Tahoma, sans-serif; overflow: hidden; }
+
+/* --- Top Bar & Stats --- */
+.top-bar { height: 50px; background: #333; display: flex; justify-content: space-between; align-items: center; padding: 0 20px; border-bottom: 1px solid var(--border-color); z-index: 10; }
+.logo { font-weight: bold; font-size: 16px; color: #fff; display: flex; align-items: center; gap: 20px; }
+.stats-board { font-size: 12px; color: #4ec9b0; font-weight: normal; background: #222; padding: 4px 10px; border-radius: 4px; border: 1px solid #444; }
+.stats-board b { color: #e5c07b; }
+.btn { background: var(--primary); color: white; border: none; padding: 8px 15px; border-radius: 4px; cursor: pointer; font-weight: bold; }
+.btn:hover { background: #005f9e; }
+
+.workspace { display: flex; flex: 1; height: calc(100vh - 50px); overflow: hidden; }
+
+/* --- Sidebars --- */
+.sidebar { width: 300px; background: var(--bg-panel); border-right: 1px solid var(--border-color); display: flex; flex-direction: column; z-index: 5; }
+.right-sidebar { border-right: none; border-left: 1px solid var(--border-color); width: 400px; /* Nới rộng một chút cho Inspector V5 */ }
+.sidebar-header { padding: 10px 15px; background: #2d2d2d; font-weight: bold; font-size: 13px; text-transform: uppercase; }
+.tree-container, .inspector-container { padding: 15px; overflow-y: auto; flex: 1; font-size: 13px; }
+.empty-state { color: var(--text-muted); text-align: center; margin-top: 50px; font-style: italic; }
+
+/* --- Canvas --- */
+.canvas-container { flex: 1; position: relative; background-image: radial-gradient(#333 1px, transparent 1px); background-size: 20px 20px; }
+#canvas { width: 100%; height: 100%; position: absolute; top: 0; left: 0; }
+#drop-overlay { position: absolute; inset: 0; background: rgba(0, 122, 204, 0.2); border: 3px dashed var(--primary); display: none; align-items: center; justify-content: center; font-size: 24px; font-weight: bold; color: #fff; z-index: 100; }
+.canvas-container.drag-over #drop-overlay { display: flex; }
+
+/* --- Nested Tree View --- */
+.tree-node { margin: 2px 0; }
+.tree-caret { cursor: pointer; user-select: none; color: #e5c07b; font-weight: bold; display: flex; align-items: center; gap: 5px; }
+.tree-caret::before { content: "▶"; display: inline-block; font-size: 10px; transition: transform 0.2s; color: #858585; }
+.tree-caret.caret-down::before { transform: rotate(90deg); color: #e5c07b; }
+.tree-nested { display: none; margin-left: 15px; border-left: 1px solid #444; padding-left: 5px; }
+.tree-active { display: block; }
+.tree-file { cursor: pointer; padding: 3px 0 3px 15px; color: #9cdcfe; display: flex; align-items: center; gap: 5px;}
+.tree-file::before { content: "📄"; font-size: 12px; }
+.tree-file:hover { color: #fff; background: #333; border-radius: 3px; }
+
+/* --- Floating Settings Panel --- */
+.settings-panel { position: absolute; bottom: 20px; left: 20px; background: rgba(30, 30, 30, 0.9); border: 1px solid #444; border-radius: 8px; padding: 15px; width: 280px; color: #ccc; font-size: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.5); z-index: 10; backdrop-filter: blur(5px); }
+.settings-title { font-weight: bold; color: #fff; margin-bottom: 10px; font-size: 14px; }
+.setting-item { display: flex; flex-direction: column; margin-bottom: 10px; }
+.setting-item input[type=range] { width: 100%; margin-top: 5px; }
+.legend-title { font-weight: bold; color: #aaa; margin-bottom: 5px; }
+.legend-item { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
+.color-box { width: 12px; height: 12px; border-radius: 3px; display: inline-block; }
+
+/* --- Floating Quick Tooltip --- */
+.quick-tooltip { position: absolute; background: #252526; border: 1px solid #007acc; border-radius: 6px; padding: 10px; box-shadow: 0 4px 15px rgba(0,0,0,0.6); pointer-events: none; z-index: 20; color: #ccc; font-size: 12px; min-width: 200px; display: none; transition: opacity 0.2s; }
+.quick-tooltip h4 { margin: 0 0 5px 0; color: #569cd6; font-size: 14px; }
+.quick-tooltip .t-row { margin-bottom: 3px; }
+.quick-tooltip .t-val { color: #e5c07b; }
+
+/* --- Inspector V5 (Full Details) --- */
+.inspect-section { margin-bottom: 15px; border-bottom: 1px solid #444; padding-bottom: 10px; }
+.inspect-title { color: var(--highlight); font-weight: bold; margin-bottom: 5px; font-size: 14px; display:flex; align-items:center; gap:5px; }
+.inspect-row { margin-bottom: 4px; line-height: 1.4; word-break: break-word; }
+.tag { background: #333; padding: 2px 6px; border-radius: 3px; font-size: 11px; color: #4ec9b0; border: 1px solid #444; }
+.tag-attr { color: #e06c75; background: #2a1e20; border-color: #5c2d33;}
+.tag-trait { color: #d19a66; background: #2b221a; border-color: #59442f;}
+.raw-context { background: #111; padding: 6px; border-radius: 4px; color: #c678dd; font-family: monospace; font-size: 11px; margin-top: 4px; overflow-x: auto; white-space: nowrap; border: 1px solid #333;}
+.using-item { color: #9cdcfe; font-family: monospace; font-size: 11px; margin-left: 10px;}

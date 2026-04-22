@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GaconStudio - Ultimate Neural Map (V5)</title>
+    <link rel="stylesheet" href="style.css">
+    
+    <script src="https://unpkg.com/force-graph"></script>
+</head>
+<body>
+    <header class="top-bar">
+        <div class="logo">
+            🧠 GaconStudio Neural Map V5
+            <span id="stats-board" class="stats-board">
+                Classes: <b id="stat-classes">0</b> | Dependencies: <b id="stat-deps">0</b> | Coupling: <b id="stat-coupling">0.0</b>
+            </span>
+        </div>
+        <div class="actions">
+            <button id="btn-upload" class="btn primary-btn">Load JSON Data</button>
+            <input type="file" id="file-input" accept=".json" hidden>
+        </div>
+    </header>
+
+    <main class="workspace">
+        <aside class="sidebar left-sidebar">
+            <div class="sidebar-header">Project Hierarchy</div>
+            <div class="tree-container" id="file-tree">
+                <div class="empty-state">Chưa có dữ liệu</div>
+            </div>
+        </aside>
+
+        <section class="canvas-container" id="canvas-wrapper">
+            <div id="drop-overlay">Kéo thả file JSON vào đây</div>
+            <div id="canvas"></div>
+            
+            <div class="settings-panel" id="settings-panel">
+                <div class="settings-title">⚙️ Graph Settings & Legend</div>
+                
+                <label class="setting-item">
+                    Kích thước Node: <span id="val-nodesize">5</span>
+                    <input type="range" id="slider-nodesize" min="2" max="20" value="5">
+                </label>
+                <label class="setting-item">
+                    Lực đẩy (Repel): <span id="val-repel">300</span>
+                    <input type="range" id="slider-repel" min="50" max="1000" value="300">
+                </label>
+                <label class="setting-item">
+                    Khoảng cách dây: <span id="val-distance">50</span>
+                    <input type="range" id="slider-distance" min="10" max="300" value="50">
+                </label>
+                <label class="setting-item">
+                    <input type="checkbox" id="check-labels" checked> Hiện tên Node
+                </label>
+
+                <hr style="border-color: #444; margin: 10px 0;">
+                <div class="legend-title">Phân loại Node (V5 Taxonomy)</div>
+                <div class="legend-item"><span class="color-box" style="background:#e06c75"></span> Editor Script / Tools</div>
+                <div class="legend-item"><span class="color-box" style="background:#e5c07b"></span> ScriptableObject (Config)</div>
+                <div class="legend-item"><span class="color-box" style="background:#569cd6"></span> MonoBehaviour (UI/Logic)</div>
+                <div class="legend-item"><span class="color-box" style="background:#4ec9b0"></span> Core System</div>
+                <div class="legend-item"><span class="color-box" style="background:#c678dd"></span> Enum</div>
+                <div class="legend-item"><span class="color-box" style="background:#d19a66"></span> Struct</div>
+                <div class="legend-item"><span class="color-box" style="background:#b5cea8"></span> Interface</div>
+                <div class="legend-item"><span class="color-box" style="background:#abb2bf"></span> Pure C# Class</div>
+            </div>
+
+            <div id="quick-tooltip" class="quick-tooltip"></div>
+        </section>
+
+        <aside class="sidebar right-sidebar">
+            <div class="sidebar-header">Node Inspector (Deep View)</div>
+            <div class="inspector-container" id="node-inspector">
+                <div class="empty-state">Click vào Node để phân tích sâu</div>
+            </div>
+        </aside>
+    </main>
+
+    <script src="main.js"></script>
+</body>
+</html>
