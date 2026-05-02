@@ -68,7 +68,7 @@ namespace GaconStudio.SynapseGraph.Editor
         /// </summary>
         private bool IsValidType(Type type, string path)
         {
-            if (type == null || string.IsNullOrEmpty(type.Namespace) || type.Name.Contains("<")) return false;
+            if (type == null || type.Name.Contains("<")) return false;
 
             if (path.StartsWith("Packages/com.gaconstudio.synapsegraph")) return false;
 
