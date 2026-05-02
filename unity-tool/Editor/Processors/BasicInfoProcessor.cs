@@ -20,7 +20,7 @@ namespace GaconStudio.SynapseGraph.Editor
             node.Kind = AnalyzerUtility.GetBaseKind(type);
             node.Traits = AnalyzerUtility.GetClassTraits(type);
             node.Name = AnalyzerUtility.GetCleanTypeName(type);
-            node.Namespace = type.Namespace;
+            node.Namespace = string.IsNullOrEmpty(type.Namespace) ? "Global" : type.Namespace;
             node.FolderPath = Path.GetDirectoryName(path).Replace("\\", "/");
             node.BaseClass = (type.BaseType != null && type.BaseType != typeof(object)) ? AnalyzerUtility.GetCleanTypeName(type.BaseType) : "None";
             node.Interfaces = type.GetInterfaces().Select(i => AnalyzerUtility.GetCleanTypeName(i)).ToList();
