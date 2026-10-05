@@ -439,14 +439,20 @@ namespace GaconStudio.SynapseGraph.Editor
             sb.AppendLine();
 
             var signalMap = new Dictionary<string, List<string>>();
+
             foreach (var c in runtime)
             {
+                if (c == null || string.IsNullOrEmpty(c.Name) || c.Methods == null) continue;
+
                 foreach (var m in c.Methods)
                 {
-                    if (m.FiredSignals == null) continue;
+                    if (m?.FiredSignals == null) continue;
+
                     foreach (var sig in m.FiredSignals)
                     {
+                        if (string.IsNullOrEmpty(sig)) continue;
                         if (!signalMap.ContainsKey(sig)) signalMap[sig] = new List<string>();
+
                         string entry = $"{c.Name}.{m.Name}";
                         if (!signalMap[sig].Contains(entry)) signalMap[sig].Add(entry);
                     }
@@ -475,20 +481,32 @@ namespace GaconStudio.SynapseGraph.Editor
             sb.AppendLine();
 
             var depMap = new Dictionary<string, HashSet<string>>();
-            var runtimeNames = new HashSet<string>(runtime.Select(c => c.Name));
+
+            // [FIX] Filter null/empty trước khi tạo HashSet — tránh ArgumentNullException
+            var runtimeNames = new HashSet<string>(
+                runtime
+                    .Where(c => c != null && !string.IsNullOrEmpty(c.Name))
+                    .Select(c => c.Name)
+            );
 
             foreach (var c in runtime)
             {
+                if (c == null || string.IsNullOrEmpty(c.Name) || c.Methods == null) continue;
+
                 foreach (var m in c.Methods)
                 {
-                    if (m.MethodDependencies == null) continue;
+                    if (m?.MethodDependencies == null) continue;
+
                     foreach (var d in m.MethodDependencies)
                     {
+                        if (d == null) continue;
                         if (string.IsNullOrEmpty(d.TargetClass)) continue;
                         if (!runtimeNames.Contains(d.TargetClass)) continue;
                         if (d.TargetClass == c.Name) continue;
 
-                        if (!depMap.ContainsKey(c.Name)) depMap[c.Name] = new HashSet<string>();
+                        if (!depMap.ContainsKey(c.Name))
+                            depMap[c.Name] = new HashSet<string>();
+
                         depMap[c.Name].Add(d.TargetClass);
                     }
                 }

@@ -253,32 +253,43 @@ namespace GaconStudio.SynapseGraph.Editor
                 return;
             }
 
-            EnsureSaveFolderExists();
-
-            // Luôn ghi JSON
-            WriteJson(m_cachedProjectData);
-
-            // Ghi Markdown tùy mode
-            switch (m_exportMode)
+            try
             {
-                case ExportMode.Full:
-                    WriteFullMarkdown(m_cachedProjectData);
-                    break;
+                EnsureSaveFolderExists();
 
-                case ExportMode.Summary:
-                    WriteSummaryMarkdown(m_cachedProjectData);
-                    break;
+                // Luôn ghi JSON
+                WriteJson(m_cachedProjectData);
 
-                case ExportMode.Chunked:
-                    WriteChunkedMarkdown(m_cachedProjectData, m_maxLinesPerChunk);
-                    break;
+                // Ghi Markdown tùy mode
+                switch (m_exportMode)
+                {
+                    case ExportMode.Full:
+                        WriteFullMarkdown(m_cachedProjectData);
+                        break;
+
+                    case ExportMode.Summary:
+                        WriteSummaryMarkdown(m_cachedProjectData);
+                        break;
+
+                    case ExportMode.Chunked:
+                        WriteChunkedMarkdown(m_cachedProjectData, m_maxLinesPerChunk);
+                        break;
+                }
+
+                AssetDatabase.Refresh();
+                EditorUtility.RevealInFinder(GetAbsoluteSavePath());
+
+                Debug.Log($"<color=#4ec9b0><b>[SynapseGraph]</b></color> Export complete: mode = <b>{m_exportMode}</b>, " +
+                          $"folder = {m_savePath}");
             }
-
-            AssetDatabase.Refresh();
-            EditorUtility.RevealInFinder(GetAbsoluteSavePath());
-
-            Debug.Log($"<color=#4ec9b0><b>[SynapseGraph]</b></color> Export complete: mode = <b>{m_exportMode}</b>, " +
-                      $"folder = {m_savePath}");
+            catch (System.Exception ex)
+            {
+                Debug.LogError($"[SynapseGraph] Export failed: {ex.Message}\n{ex.StackTrace}");
+                EditorUtility.DisplayDialog(
+                    "Export Failed",
+                    $"Có lỗi xảy ra trong quá trình export:\n\n{ex.Message}\n\nXem Console để biết chi tiết.",
+                    "OK");
+            }
         }
 
         private void WriteJson(ProjectData data)
