@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 
 namespace GaconStudio.SynapseGraph.Runtime
@@ -12,8 +12,10 @@ namespace GaconStudio.SynapseGraph.Runtime
         public string Name;
         public string Namespace;
         public string FolderPath;
+        public bool IsEditorOnly = false;
 
         public string BaseClass;
+        public List<string> BaseChain = new List<string>();
         public List<string> Usings = new List<string>();
         public List<string> Interfaces = new List<string>();
         public List<string> EnumValues = new List<string>();
