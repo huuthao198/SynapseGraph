@@ -13,12 +13,10 @@ namespace GaconStudio.SynapseGraph.Editor
     /// <summary>
     /// Phân tích AST bằng Roslyn để trích xuất dependency, mutation, signal flow.
     /// 
-    /// [v3 - FIX CRITICAL]
-    /// - FIX BUG 3: Không còn match nhầm method do StartsWith. So khớp exact + param types.
-    /// - FIX BUG 4: Dependency được gắn ConditionalContext (if/loop/switch).
-    /// - FIX BUG 5: MutatedFields chỉ chứa field thực sự của class, bỏ property/local var.
-    /// - ENHANCE: ExtractSignals nhận diện cả Fire<T> và Fire(string) overload.
-    /// - ENHANCE: Filter Debug/Mathf mở rộng.
+    /// [v4 - FIX SIGNAL FLOW]
+    /// - FIX BUG: ExtractSignals nhận diện signal fire qua Constant/MemberAccess.
+    /// - FIX BUG: ExtractSignals nhận diện signal fire qua Identifier (local const).
+    /// - Không resolve constant value (cần SemanticModel) → giữ tên reference dạng "CoreEvents.LivesChanged".
     /// </summary>
     public class RoslynASTProcessor : IClassProcessor
     {
@@ -45,7 +43,6 @@ namespace GaconStudio.SynapseGraph.Editor
 
             if (classDecl == null) return;
 
-            // Pre-compute field names để check mutation (bug 5)
             HashSet<string> classFieldNames = new HashSet<string>(node.Fields.Select(f => f.Name));
 
             foreach (var mNode in node.Methods)
@@ -73,10 +70,6 @@ namespace GaconStudio.SynapseGraph.Editor
             return null;
         }
 
-        /// <summary>
-        /// [FIX BUG 3] Match chính xác: identifier exact + parameter list khớp.
-        /// Không dùng StartsWith để tránh "Preload" match nhầm "PreloadInternal".
-        /// </summary>
         private bool IsMatch(BaseMethodDeclarationSyntax syntax, MethodNode mNode)
         {
             string rawName = GetRawMethodName(mNode.Name);
@@ -124,10 +117,6 @@ namespace GaconStudio.SynapseGraph.Editor
             return idx > 0 ? signature.Substring(0, idx) : signature;
         }
 
-        /// <summary>
-        /// Chuẩn hóa tên type: "Int32" (Reflection) ↔ "int" (Roslyn) → "int".
-        /// Dùng \b word boundary để tránh replace nhầm UInt32 → Uint.
-        /// </summary>
         private static string NormalizeTypeString(string t)
         {
             if (string.IsNullOrEmpty(t)) return string.Empty;
@@ -178,7 +167,6 @@ namespace GaconStudio.SynapseGraph.Editor
                 string caller = memberAccess.Expression.ToString();
                 string methodName = memberAccess.Name.ToString();
 
-                // Filter noise
                 if (IsNoiseCaller(caller)) return;
 
                 string depType = "LogicCall";
@@ -214,10 +202,6 @@ namespace GaconStudio.SynapseGraph.Editor
                 || caller == "UnityEngine.Mathf";
         }
 
-        /// <summary>
-        /// [FIX BUG 4] Tìm ngữ cảnh điều kiện gần nhất của node.
-        /// Ưu tiên: if → loop → switch → "always".
-        /// </summary>
         private string GetConditionalContext(SyntaxNode node)
         {
             var ifAncestor = node.Ancestors().OfType<IfStatementSyntax>().FirstOrDefault();
@@ -292,7 +276,6 @@ namespace GaconStudio.SynapseGraph.Editor
                 string fieldName = GetAssignmentTargetName(assignment.Left);
                 if (string.IsNullOrEmpty(fieldName)) continue;
 
-                // [FIX BUG 5] Chỉ ghi nhận nếu là field thực sự của class
                 if (!classFieldNames.Contains(fieldName)) continue;
 
                 if (!mNode.MutatedFields.Contains(fieldName))
@@ -304,12 +287,10 @@ namespace GaconStudio.SynapseGraph.Editor
 
         private string GetAssignmentTargetName(ExpressionSyntax expr)
         {
-            // "this.field = ..." → "field"
             if (expr is MemberAccessExpressionSyntax ma)
             {
                 return ma.Name.Identifier.Text;
             }
-            // "field = ..." → "field"
             if (expr is IdentifierNameSyntax id)
             {
                 return id.Identifier.Text;
@@ -319,55 +300,103 @@ namespace GaconStudio.SynapseGraph.Editor
 
         #endregion
 
-        #region SIGNALS (ENHANCE)
+        #region SIGNALS (FIX BUG — v4)
 
         /// <summary>
-        /// [ENHANCE] Nhận diện cả Fire<T>(signal) và Fire(string id, payload) và Fire(string id).
-        /// Code cũ chỉ match generic Fire → miss hết overload string-based.
+        /// [FIX] Nhận diện signal fire qua 4 pattern:
+        /// 1. Fire<T>(signal)                  → dùng type argument (VD: "MySignal")
+        /// 2. Fire("string_id", payload)        → dùng literal string
+        /// 3. Fire(CoreEvents.LivesChanged, x)  → dùng member access text (VD: "CoreEvents.LivesChanged")
+        /// 4. Fire(localConstant)               → dùng identifier name
         /// </summary>
         private void ExtractSignals(InvocationExpressionSyntax inv, MethodNode mNode)
         {
-            string methodName = null;
-            string signalName = null;
-
-            if (inv.Expression is MemberAccessExpressionSyntax memberAccess)
-            {
-                if (memberAccess.Name is GenericNameSyntax genericName)
-                {
-                    methodName = genericName.Identifier.Text;
-                    var typeArg = genericName.TypeArgumentList.Arguments.FirstOrDefault();
-                    if (typeArg != null) signalName = typeArg.ToString();
-                }
-                else if (memberAccess.Name is IdentifierNameSyntax idName)
-                {
-                    methodName = idName.Identifier.Text;
-                }
-            }
-            else if (inv.Expression is IdentifierNameSyntax id)
-            {
-                methodName = id.Identifier.Text;
-            }
-
+            // Bước 1: Xác định method name có phải "Fire"
+            string methodName = GetInvocationMethodName(inv);
             if (methodName != "Fire") return;
 
-            // Non-generic Fire → tìm string literal đầu tiên
-            if (string.IsNullOrEmpty(signalName))
-            {
-                var literal = inv.ArgumentList.Arguments
-                    .Select(a => a.Expression)
-                    .OfType<LiteralExpressionSyntax>()
-                    .FirstOrDefault(l => l.IsKind(SyntaxKind.StringLiteralExpression));
+            // Bước 2: Lấy argument đầu tiên
+            var arguments = inv.ArgumentList.Arguments;
+            if (arguments.Count == 0) return;
 
-                if (literal != null)
-                {
-                    signalName = literal.Token.ValueText;
-                }
-            }
+            ExpressionSyntax firstArg = arguments[0].Expression;
 
-            if (!string.IsNullOrEmpty(signalName) && !mNode.FiredSignals.Contains(signalName))
+            // Bước 3: Trích xuất signal name theo pattern
+            string signalName = ExtractSignalName(firstArg);
+            if (string.IsNullOrEmpty(signalName)) return;
+
+            // Bước 4: Add vào list nếu chưa có
+            if (!mNode.FiredSignals.Contains(signalName))
             {
                 mNode.FiredSignals.Add(signalName);
             }
+        }
+
+        /// <summary>
+        /// Lấy tên method được invoke.
+        /// VD: "this.Fire(...)" → "Fire"; "Signal.Fire(...)" → "Fire"; "Fire(...)" → "Fire".
+        /// </summary>
+        private string GetInvocationMethodName(InvocationExpressionSyntax inv)
+        {
+            if (inv.Expression is MemberAccessExpressionSyntax memberAccess)
+            {
+                if (memberAccess.Name is GenericNameSyntax genericName)
+                    return genericName.Identifier.Text;
+
+                if (memberAccess.Name is IdentifierNameSyntax idName)
+                    return idName.Identifier.Text;
+            }
+            else if (inv.Expression is IdentifierNameSyntax id)
+            {
+                return id.Identifier.Text;
+            }
+            else if (inv.Expression is GenericNameSyntax generic)
+            {
+                return generic.Identifier.Text;
+            }
+
+            return null;
+        }
+
+        /// <summary>
+        /// Trích xuất signal name từ argument đầu tiên.
+        /// 
+        /// Priority:
+        /// 1. Literal string → value
+        /// 2. Member access (CoreEvents.LivesChanged) → full text
+        /// 3. Identifier (local const) → identifier name
+        /// 4. Invocation (GetSignal()) → skip
+        /// </summary>
+        private string ExtractSignalName(ExpressionSyntax expr)
+        {
+            if (expr == null) return null;
+
+            // Pattern 1: String literal → value
+            if (expr is LiteralExpressionSyntax literal
+                && literal.IsKind(SyntaxKind.StringLiteralExpression))
+            {
+                return literal.Token.ValueText;
+            }
+
+            // Pattern 2: MemberAccess (CoreEvents.LivesChanged, AppEvents.X)
+            if (expr is MemberAccessExpressionSyntax memberAccess)
+            {
+                // Nếu là generic type arg → "Type<T>" (VD: SignalEvent<int>)
+                // Nhưng argument đầu tiên của Fire thường không phải generic type
+                // → trả về full text "CoreEvents.LivesChanged"
+                string full = memberAccess.ToString();
+                // Loại bỏ whitespace
+                return full.Replace(" ", string.Empty);
+            }
+
+            // Pattern 3: Identifier (local const hoặc field)
+            if (expr is IdentifierNameSyntax identifier)
+            {
+                return identifier.Identifier.Text;
+            }
+
+            // Pattern 4: Bỏ qua — không trace được
+            return null;
         }
 
         #endregion

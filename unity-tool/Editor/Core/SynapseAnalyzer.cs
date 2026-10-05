@@ -16,16 +16,19 @@ namespace GaconStudio.SynapseGraph.Editor
     /// <summary>
     /// Bộ máy điều phối chính, chạy các mã nguồn qua dây chuyền (Pipeline) phân tích.
     /// 
-    /// [v2 - FIX CRITICAL]
-    /// - Không dùng script.GetClass() đơn lẻ nữa → parse Roslyn để lấy TẤT CẢ type trong file.
-    /// - Cache Reflection types theo Assembly để tăng tốc.
-    /// - Fallback scan toàn bộ assemblies khi MonoScript không có class chính.
+    /// [v3 - FIX NOISE]
+    /// - FIX BUG: Filter compiler-generated types (<>c, <>c__DisplayClass, <>f__AnonymousType).
+    /// - FIX BUG: Skip ClassNode có Name empty sau khi process (thay vì add vào projectData với null).
+    /// - ENHANCE: Log warning để debug khi skip.
     /// </summary>
     public class SynapseAnalyzer
     {
         private readonly List<string> m_targetFolders;
         private readonly List<IClassProcessor> m_pipeline;
         private readonly Dictionary<Assembly, Type[]> m_assemblyTypeCache = new Dictionary<Assembly, Type[]>();
+
+        private int m_skippedCompilerGenCount;
+        private int m_skippedEmptyNameCount;
 
         public SynapseAnalyzer(List<string> targetFolders)
         {
@@ -45,6 +48,10 @@ namespace GaconStudio.SynapseGraph.Editor
         public ProjectData RunAnalysis()
         {
             ProjectData projectData = new ProjectData();
+
+            m_skippedCompilerGenCount = 0;
+            m_skippedEmptyNameCount = 0;
+
             string[] guids = AssetDatabase.FindAssets("t:MonoScript");
 
             foreach (string guid in guids)
@@ -69,13 +76,18 @@ namespace GaconStudio.SynapseGraph.Editor
 
                 if (string.IsNullOrEmpty(rawCode)) continue;
 
-                // Bước 1: Parse Roslyn để lấy TẤT CẢ type trong file
                 List<DeclaredTypeInfo> declaredTypes = ExtractDeclaredTypes(rawCode);
                 if (declaredTypes.Count == 0) continue;
 
-                // Bước 2: Với mỗi declared type, lookup Reflection Type và chạy pipeline
                 foreach (var decl in declaredTypes)
                 {
+                    // [FIX] Skip compiler-generated types ngay từ đầu
+                    if (IsCompilerGenerated(decl.Name))
+                    {
+                        m_skippedCompilerGenCount++;
+                        continue;
+                    }
+
                     Type type = FindReflectionType(script, decl);
                     if (type == null) continue;
 
@@ -92,11 +104,41 @@ namespace GaconStudio.SynapseGraph.Editor
                         }
                     }
 
+                    // [FIX] Post-process validation: skip nếu Name vẫn empty/null
+                    if (string.IsNullOrEmpty(node.Name))
+                    {
+                        m_skippedEmptyNameCount++;
+                        Debug.LogWarning($"[SynapseGraph] Skipped '{decl.Namespace}.{decl.Name}' (path: {path}) — Name empty after processing.");
+                        continue;
+                    }
+
                     projectData.Classes.Add(node);
                 }
             }
 
+            if (m_skippedCompilerGenCount > 0)
+            {
+                Debug.Log($"<color=#4ec9b0>[SynapseGraph]</color> Skipped <b>{m_skippedCompilerGenCount}</b> compiler-generated types.");
+            }
+            if (m_skippedEmptyNameCount > 0)
+            {
+                Debug.LogWarning($"[SynapseGraph] Skipped {m_skippedEmptyNameCount} types with empty Name after processing.");
+            }
+
             return projectData;
+        }
+
+        /// <summary>
+        /// Check xem tên type có phải compiler-generated không.
+        /// C# compiler sinh ra các type ẩn có tên bắt đầu bằng '<':
+        /// - &lt;&gt;c                        — static lambda container
+        /// - &lt;&gt;c__DisplayClass         — captured variable closure
+        /// - &lt;&gt;f__AnonymousType        — anonymous type
+        /// </summary>
+        private static bool IsCompilerGenerated(string typeName)
+        {
+            if (string.IsNullOrEmpty(typeName)) return true;
+            return typeName.StartsWith("<");
         }
 
         /// <summary>
@@ -125,7 +167,7 @@ namespace GaconStudio.SynapseGraph.Editor
 
                 var allTypeDecls = root.DescendantNodes()
                     .OfType<BaseTypeDeclarationSyntax>()
-                    .Where(t => !(t.Parent is BaseTypeDeclarationSyntax)); // top-level only
+                    .Where(t => !(t.Parent is BaseTypeDeclarationSyntax));
 
                 foreach (var typeDecl in allTypeDecls)
                 {
@@ -160,7 +202,6 @@ namespace GaconStudio.SynapseGraph.Editor
                 if (found != null) return found;
             }
 
-            // Fallback: scan toàn bộ assemblies đã load (dùng cache)
             foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
             {
                 Type found = LookupInAssembly(asm, decl);
@@ -183,7 +224,6 @@ namespace GaconStudio.SynapseGraph.Editor
                 }
                 catch
                 {
-                    // Một số assembly (dynamic, reflection emit) có thể throw
                     types = Array.Empty<Type>();
                 }
                 m_assemblyTypeCache[assembly] = types;
@@ -204,9 +244,6 @@ namespace GaconStudio.SynapseGraph.Editor
             return idx > 0 ? name.Substring(0, idx) : name;
         }
 
-        /// <summary>
-        /// Struct nội bộ lưu thông tin type đã parse từ Roslyn.
-        /// </summary>
         private class DeclaredTypeInfo
         {
             public string Namespace;
