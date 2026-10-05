@@ -10,41 +10,239 @@ namespace GaconStudio.SynapseGraph.Editor
     /// <summary>
     /// Chuyển ProjectData → Markdown thân thiện với AI/người đọc.
     /// 
-    /// Output gồm 7 section:
-    /// 1. Overview  — thống kê tổng quan
-    /// 2. Folder Tree — cấu trúc thư mục
-    /// 3. Class Index — bảng tóm tắt tất cả class
-    /// 4. Runtime Classes — chi tiết class runtime
-    /// 5. Editor Classes — chi tiết class editor (compact)
-    /// 6. Signal Flow — class nào fire signal nào
-    /// 7. Dependency Summary — class nào gọi class nào
+    /// [v2 - SIZE HANDLING]
+    /// - Thêm ExportSummary() — bản ngắn gọn luôn dùng được.
+    /// - Thêm ExportChunked() — chia nhỏ khi project lớn.
+    /// - Thêm Estimate() — dự đoán độ phức tạp để chọn mode.
+    /// - Export() cũ → alias của ExportFull() để backward-compatible.
     /// </summary>
     public static class MarkdownExporter
     {
-        public static string Export(ProjectData data)
+        // Ước lượng dòng cho 1 class detail (không tính fields/properties/methods).
+        private const int BASE_LINES_PER_CLASS = 8;
+
+        #region PUBLIC API
+
+        /// <summary>
+        /// [Backward-compatible] Xuất full markdown. Dùng ExportFull() cho code mới.
+        /// </summary>
+        public static string Export(ProjectData data) => ExportFull(data);
+
+        public static string ExportFull(ProjectData data)
         {
-            if (data == null || data.Classes == null || data.Classes.Count == 0)
-                return "# 📐 PROJECT ARCHITECTURE SNAPSHOT\n\n*No data.*\n";
+            if (IsEmpty(data))
+                return BuildEmptyDoc();
 
-            var runtimeClasses = data.Classes.Where(c => !c.IsEditorOnly).OrderBy(c => c.FolderPath).ThenBy(c => c.Name).ToList();
-            var editorClasses = data.Classes.Where(c => c.IsEditorOnly).OrderBy(c => c.FolderPath).ThenBy(c => c.Name).ToList();
+            var runtime = GetSortedRuntime(data);
+            var editor = GetSortedEditor(data);
 
-            StringBuilder sb = new StringBuilder(8192);
-
+            StringBuilder sb = new StringBuilder(16384);
             WriteTitle(sb);
-            WriteOverview(sb, data.Classes, runtimeClasses, editorClasses);
+            WriteOverview(sb, data.Classes, runtime, editor);
             WriteFolderTree(sb, data.Classes);
-            WriteClassIndex(sb, runtimeClasses, editorClasses);
-            WriteClassDetails(sb, runtimeClasses, "4. RUNTIME CLASSES");
-            if (editorClasses.Count > 0)
-                WriteClassDetails(sb, editorClasses, "5. EDITOR CLASSES", compact: true);
-            WriteSignalFlow(sb, runtimeClasses);
-            WriteDependencySummary(sb, runtimeClasses);
-
+            WriteClassIndex(sb, runtime, editor);
+            WriteClassDetails(sb, runtime, "4. RUNTIME CLASSES");
+            if (editor.Count > 0)
+                WriteClassDetails(sb, editor, "5. EDITOR CLASSES", compact: true);
+            WriteSignalFlow(sb, runtime);
+            WriteDependencySummary(sb, runtime);
             return sb.ToString();
         }
 
-        #region SECTIONS
+        public static string ExportSummary(ProjectData data)
+        {
+            if (IsEmpty(data))
+                return BuildEmptyDoc();
+
+            var runtime = GetSortedRuntime(data);
+            var editor = GetSortedEditor(data);
+
+            StringBuilder sb = new StringBuilder(4096);
+            WriteTitle(sb);
+            WriteOverview(sb, data.Classes, runtime, editor);
+            WriteClassIndex(sb, runtime, editor);
+            WriteSignalFlow(sb, runtime);
+            WriteDependencySummary(sb, runtime);
+
+            sb.AppendLine("---");
+            sb.AppendLine();
+            sb.AppendLine("*Full class details available in `_FULL.md` or chunked files.*");
+            sb.AppendLine();
+            return sb.ToString();
+        }
+
+        /// <summary>
+        /// Chia markdown thành nhiều chunk theo namespace, đảm bảo mỗi chunk <= maxLinesPerChunk.
+        /// Trả về danh sách ChunkFile (chưa bao gồm file Summary — caller tự gọi ExportSummary).
+        /// </summary>
+        public static List<ChunkFile> ExportChunked(ProjectData data, int maxLinesPerChunk = 8000)
+        {
+            List<ChunkFile> result = new List<ChunkFile>();
+            if (IsEmpty(data)) return result;
+
+            if (maxLinesPerChunk < 500) maxLinesPerChunk = 500;
+
+            var runtime = GetSortedRuntime(data);
+
+            // Gom class runtime theo namespace, sắp xếp theo tên namespace.
+            var nsGroups = runtime
+                .GroupBy(c => c.Namespace)
+                .OrderBy(g => g.Key)
+                .ToList();
+
+            int chunkIndex = 1;
+            int currentLines = 0;
+            var currentNss = new List<IGrouping<string, ClassNode>>();
+            int chunkNumber = 1;
+
+            Action flushChunk = () =>
+            {
+                if (currentNss.Count == 0) return;
+
+                StringBuilder sb = new StringBuilder(8192);
+                WriteChunkHeader(sb, chunkNumber, currentNss);
+                result.Add(new ChunkFile
+                {
+                    Suffix = BuildChunkSuffix(chunkNumber, currentNss),
+                    Content = sb.ToString(),
+                    LineCount = sb.ToString().Count(c => c == '\n')
+                });
+
+                chunkNumber++;
+                currentNss.Clear();
+                currentLines = 0;
+            };
+
+            foreach (var nsGroup in nsGroups)
+            {
+                int nsLines = EstimateNamespaceLines(nsGroup);
+
+                if (currentLines + nsLines > maxLinesPerChunk && currentNss.Count > 0)
+                {
+                    flushChunk();
+                }
+
+                currentNss.Add(nsGroup);
+                currentLines += nsLines;
+
+                // Edge case: 1 namespace quá lớn → vẫn phải ghi 1 chunk riêng (không split namespace).
+                if (currentLines >= maxLinesPerChunk)
+                {
+                    flushChunk();
+                }
+            }
+
+            flushChunk();
+            return result;
+        }
+
+        public static ComplexityStats Estimate(ProjectData data)
+        {
+            ComplexityStats stats = new ComplexityStats();
+            if (IsEmpty(data)) return stats;
+
+            stats.TotalClasses = data.Classes.Count;
+            stats.RuntimeClasses = data.Classes.Count(c => !c.IsEditorOnly);
+            stats.EditorClasses = data.Classes.Count(c => c.IsEditorOnly);
+            stats.TotalMethods = data.Classes.Sum(c => c.Methods?.Count ?? 0);
+            stats.TotalDependencies = data.Classes
+                .SelectMany(c => c.Methods ?? new List<MethodNode>())
+                .Sum(m => m.MethodDependencies?.Count ?? 0);
+
+            // Ước lượng dòng Full
+            int estimated = 50; // overview + folder tree + index
+            foreach (var c in data.Classes)
+            {
+                estimated += BASE_LINES_PER_CLASS;
+                estimated += (c.Fields?.Count ?? 0);
+                estimated += (c.Properties?.Count ?? 0);
+                estimated += (c.Methods?.Count ?? 0) * 2;
+                estimated += (c.Methods ?? new List<MethodNode>())
+                    .Sum(m => m.MethodDependencies?.Count ?? 0);
+            }
+            stats.EstimatedFullLines = estimated;
+
+            return stats;
+        }
+
+        #endregion
+
+        #region CHUNK HELPERS
+
+        private static void WriteChunkHeader(StringBuilder sb, int chunkNumber, List<IGrouping<string, ClassNode>> nsGroups)
+        {
+            sb.AppendLine($"# 📐 ARCHITECTURE CHUNK {chunkNumber:D2}");
+            sb.AppendLine();
+            sb.AppendLine($"> Namespaces: {string.Join(", ", nsGroups.Select(g => $"`{g.Key}`"))}");
+            sb.AppendLine($"> Classes in chunk: {nsGroups.Sum(g => g.Count())}");
+            sb.AppendLine();
+
+            foreach (var nsGroup in nsGroups)
+            {
+                sb.AppendLine($"## Namespace: `{nsGroup.Key}`");
+                sb.AppendLine();
+                foreach (var c in nsGroup.OrderBy(c => c.Name))
+                    WriteSingleClass(sb, c, compact: false);
+            }
+        }
+
+        private static string BuildChunkSuffix(int chunkNumber, List<IGrouping<string, ClassNode>> nsGroups)
+        {
+            if (nsGroups.Count == 1)
+            {
+                string ns = nsGroups[0].Key;
+                string shortName = ns.Contains('.') ? ns.Substring(ns.LastIndexOf('.') + 1) : ns;
+                return $"{chunkNumber:D2}_{SanitizeName(shortName)}";
+            }
+            return $"{chunkNumber:D2}_Mixed_{nsGroups.Count}ns";
+        }
+
+        private static string SanitizeName(string name)
+        {
+            if (string.IsNullOrEmpty(name)) return "Unknown";
+            var sb = new StringBuilder(name.Length);
+            foreach (char c in name)
+            {
+                if (char.IsLetterOrDigit(c) || c == '_') sb.Append(c);
+                else sb.Append('_');
+            }
+            return sb.ToString();
+        }
+
+        private static int EstimateNamespaceLines(IGrouping<string, ClassNode> nsGroup)
+        {
+            int lines = 3; // header namespace
+            foreach (var c in nsGroup)
+            {
+                lines += BASE_LINES_PER_CLASS;
+                lines += (c.Fields?.Count ?? 0);
+                lines += (c.Properties?.Count ?? 0);
+                lines += (c.Methods?.Count ?? 0) * 2;
+                lines += (c.Methods ?? new List<MethodNode>())
+                    .Sum(m => m.MethodDependencies?.Count ?? 0);
+            }
+            return lines;
+        }
+
+        #endregion
+
+        #region COMMON SECTIONS
+
+        private static bool IsEmpty(ProjectData data)
+        {
+            return data == null || data.Classes == null || data.Classes.Count == 0;
+        }
+
+        private static string BuildEmptyDoc()
+        {
+            return "# 📐 PROJECT ARCHITECTURE SNAPSHOT\n\n*No data.*\n";
+        }
+
+        private static List<ClassNode> GetSortedRuntime(ProjectData data) =>
+            data.Classes.Where(c => !c.IsEditorOnly).OrderBy(c => c.FolderPath).ThenBy(c => c.Name).ToList();
+
+        private static List<ClassNode> GetSortedEditor(ProjectData data) =>
+            data.Classes.Where(c => c.IsEditorOnly).OrderBy(c => c.FolderPath).ThenBy(c => c.Name).ToList();
 
         private static void WriteTitle(StringBuilder sb)
         {
@@ -78,10 +276,7 @@ namespace GaconStudio.SynapseGraph.Editor
             sb.AppendLine();
             sb.AppendLine("```");
 
-            var byFolder = all
-                .GroupBy(c => c.FolderPath)
-                .OrderBy(g => g.Key);
-
+            var byFolder = all.GroupBy(c => c.FolderPath).OrderBy(g => g.Key);
             foreach (var g in byFolder)
             {
                 sb.AppendLine(g.Key);
@@ -100,8 +295,7 @@ namespace GaconStudio.SynapseGraph.Editor
             sb.AppendLine("| Class | Kind | Namespace | Base | Interfaces |");
             sb.AppendLine("|-------|------|-----------|------|------------|");
 
-            foreach (var c in runtime)
-                WriteIndexRow(sb, c);
+            foreach (var c in runtime) WriteIndexRow(sb, c);
 
             if (editor.Count > 0)
             {
@@ -110,19 +304,15 @@ namespace GaconStudio.SynapseGraph.Editor
                 sb.AppendLine();
                 sb.AppendLine("| Class | Kind | Namespace | Base | Interfaces |");
                 sb.AppendLine("|-------|------|-----------|------|------------|");
-                foreach (var c in editor)
-                    WriteIndexRow(sb, c);
+                foreach (var c in editor) WriteIndexRow(sb, c);
             }
             sb.AppendLine();
         }
 
         private static void WriteIndexRow(StringBuilder sb, ClassNode c)
         {
-            string ifaces = c.Interfaces != null && c.Interfaces.Count > 0
-                ? string.Join(", ", c.Interfaces)
-                : "-";
+            string ifaces = c.Interfaces != null && c.Interfaces.Count > 0 ? string.Join(", ", c.Interfaces) : "-";
             string baseName = string.IsNullOrEmpty(c.BaseClass) ? "-" : c.BaseClass;
-
             sb.AppendLine($"| `{c.Name}` | {c.Kind} | {c.Namespace} | `{baseName}` | {ifaces} |");
         }
 
@@ -132,16 +322,12 @@ namespace GaconStudio.SynapseGraph.Editor
             sb.AppendLine();
 
             var byNs = classes.GroupBy(c => c.Namespace).OrderBy(g => g.Key);
-
             foreach (var nsGroup in byNs)
             {
                 sb.AppendLine($"### Namespace: `{nsGroup.Key}`");
                 sb.AppendLine();
-
                 foreach (var c in nsGroup.OrderBy(c => c.Name))
-                {
                     WriteSingleClass(sb, c, compact);
-                }
             }
         }
 
@@ -178,27 +364,21 @@ namespace GaconStudio.SynapseGraph.Editor
             }
             else
             {
-                // Editor class → compact: chỉ liệt kê tên method
-                if (c.Methods.Count > 0)
-                {
+                if (c.Methods != null && c.Methods.Count > 0)
                     sb.AppendLine($"- **Methods ({c.Methods.Count}):** {string.Join(", ", c.Methods.Select(m => m.Name))}");
-                }
             }
-
             sb.AppendLine();
         }
 
         private static void WriteFields(StringBuilder sb, ClassNode c)
         {
             if (c.Fields == null || c.Fields.Count == 0) return;
-
             sb.AppendLine("- **Fields:**");
             foreach (var f in c.Fields)
             {
                 string mods = f.Modifiers != null && f.Modifiers.Count > 0 ? string.Join(" ", f.Modifiers) + " " : "";
                 string attrs = f.Attributes != null && f.Attributes.Count > 0
-                    ? string.Join(" ", f.Attributes.Select(a => $"[{a}]")) + " "
-                    : "";
+                    ? string.Join(" ", f.Attributes.Select(a => $"[{a}]")) + " " : "";
                 sb.AppendLine($"  - `{f.Access} {mods}{attrs}{f.Type} {f.Name}`");
             }
         }
@@ -206,15 +386,13 @@ namespace GaconStudio.SynapseGraph.Editor
         private static void WriteProperties(StringBuilder sb, ClassNode c)
         {
             if (c.Properties == null || c.Properties.Count == 0) return;
-
             sb.AppendLine("- **Properties:**");
             foreach (var p in c.Properties)
             {
                 string accessors = (p.HasGetter ? "get; " : "") + (p.HasSetter ? "set; " : "");
                 string mods = p.Modifiers != null && p.Modifiers.Count > 0 ? string.Join(" ", p.Modifiers) + " " : "";
                 string attrs = p.Attributes != null && p.Attributes.Count > 0
-                    ? string.Join(" ", p.Attributes.Select(a => $"[{a}]")) + " "
-                    : "";
+                    ? string.Join(" ", p.Attributes.Select(a => $"[{a}]")) + " " : "";
                 sb.AppendLine($"  - `{p.Access} {mods}{attrs}{p.Type} {p.Name} {{ {accessors}}}`");
             }
         }
@@ -222,20 +400,15 @@ namespace GaconStudio.SynapseGraph.Editor
         private static void WriteMethods(StringBuilder sb, ClassNode c)
         {
             if (c.Methods == null || c.Methods.Count == 0) return;
-
             sb.AppendLine($"- **Methods ({c.Methods.Count}):**");
-            foreach (var m in c.Methods)
-            {
-                WriteSingleMethod(sb, m);
-            }
+            foreach (var m in c.Methods) WriteSingleMethod(sb, m);
         }
 
         private static void WriteSingleMethod(StringBuilder sb, MethodNode m)
         {
             string mods = m.Modifiers != null && m.Modifiers.Count > 0 ? string.Join(" ", m.Modifiers) + " " : "";
             string attrs = m.Attributes != null && m.Attributes.Count > 0
-                ? string.Join(" ", m.Attributes.Select(a => $"[{a}]")) + " "
-                : "";
+                ? string.Join(" ", m.Attributes.Select(a => $"[{a}]")) + " " : "";
             string paramStr = string.Join(", ", m.Parameters.Select(p =>
                 $"{(string.IsNullOrEmpty(p.Modifier) ? "" : p.Modifier + " ")}{p.Type} {p.Name}"));
 
@@ -246,7 +419,6 @@ namespace GaconStudio.SynapseGraph.Editor
 
             if (m.FiredSignals != null && m.FiredSignals.Count > 0)
                 sb.AppendLine($"    - 📡 Fires: {string.Join(", ", m.FiredSignals.Select(s => $"`{s}`"))}");
-
             if (m.MutatedFields != null && m.MutatedFields.Count > 0)
                 sb.AppendLine($"    - ✏️ Mutates: {string.Join(", ", m.MutatedFields.Select(f => $"`{f}`"))}");
 
@@ -267,7 +439,6 @@ namespace GaconStudio.SynapseGraph.Editor
             sb.AppendLine();
 
             var signalMap = new Dictionary<string, List<string>>();
-
             foreach (var c in runtime)
             {
                 foreach (var m in c.Methods)
@@ -275,11 +446,9 @@ namespace GaconStudio.SynapseGraph.Editor
                     if (m.FiredSignals == null) continue;
                     foreach (var sig in m.FiredSignals)
                     {
-                        if (!signalMap.ContainsKey(sig))
-                            signalMap[sig] = new List<string>();
+                        if (!signalMap.ContainsKey(sig)) signalMap[sig] = new List<string>();
                         string entry = $"{c.Name}.{m.Name}";
-                        if (!signalMap[sig].Contains(entry))
-                            signalMap[sig].Add(entry);
+                        if (!signalMap[sig].Contains(entry)) signalMap[sig].Add(entry);
                     }
                 }
             }
@@ -315,13 +484,11 @@ namespace GaconStudio.SynapseGraph.Editor
                     if (m.MethodDependencies == null) continue;
                     foreach (var d in m.MethodDependencies)
                     {
-                        // Chỉ quan tâm dependency tới class khác trong project (không phải System/Unity)
                         if (string.IsNullOrEmpty(d.TargetClass)) continue;
                         if (!runtimeNames.Contains(d.TargetClass)) continue;
                         if (d.TargetClass == c.Name) continue;
 
-                        if (!depMap.ContainsKey(c.Name))
-                            depMap[c.Name] = new HashSet<string>();
+                        if (!depMap.ContainsKey(c.Name)) depMap[c.Name] = new HashSet<string>();
                         depMap[c.Name].Add(d.TargetClass);
                     }
                 }
@@ -335,15 +502,9 @@ namespace GaconStudio.SynapseGraph.Editor
             }
 
             foreach (var kv in depMap.OrderBy(k => k.Key))
-            {
                 sb.AppendLine($"- `{kv.Key}` → {string.Join(", ", kv.Value.Select(v => $"`{v}`"))}");
-            }
             sb.AppendLine();
         }
-
-        #endregion
-
-        #region HELPERS
 
         private static string Truncate(string s, int maxLen)
         {
@@ -353,6 +514,34 @@ namespace GaconStudio.SynapseGraph.Editor
         }
 
         #endregion
+    }
+
+    /// <summary>
+    /// Kết quả 1 chunk markdown (chưa ghi file).
+    /// </summary>
+    public class ChunkFile
+    {
+        public string Suffix;
+        public string Content;
+        public int LineCount;
+    }
+
+    /// <summary>
+    /// Thống kê độ phức tạp project — dùng để chọn export mode.
+    /// </summary>
+    public class ComplexityStats
+    {
+        public int TotalClasses;
+        public int RuntimeClasses;
+        public int EditorClasses;
+        public int TotalMethods;
+        public int TotalDependencies;
+        public int EstimatedFullLines;
+
+        public string SuggestMode(int fullThreshold = 8000)
+        {
+            return EstimatedFullLines <= fullThreshold ? "Full" : "Chunked";
+        }
     }
 }
 #endif
