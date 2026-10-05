@@ -6,6 +6,7 @@ using System.Reflection;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 using GaconStudio.SynapseGraph.Runtime;
+using Microsoft.CodeAnalysis;
 
 namespace GaconStudio.SynapseGraph.Editor
 {
