@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 
 namespace GaconStudio.SynapseGraph.Runtime
@@ -8,6 +8,7 @@ namespace GaconStudio.SynapseGraph.Runtime
     {
         public string Access;
         public List<string> Modifiers = new List<string>();
+        public List<string> Attributes = new List<string>();
         public string ReturnType;
         public string Name;
         public List<ParameterNode> Parameters = new List<ParameterNode>();
