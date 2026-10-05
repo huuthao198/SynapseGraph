@@ -12,10 +12,10 @@ namespace GaconStudio.SynapseGraph.Editor
     /// <summary>
     /// Trích xuất Fields, Properties, Methods, Constructors từ Reflection.
     /// 
-    /// [v2 - FIX & ENHANCE]
+    /// [v3 - FIX & ENHANCE]
     /// - FIX BUG: Không còn export implicit constructor của MonoBehaviour/ScriptableObject.
     /// - FIX BUG: Filter constructor chính xác bằng Roslyn parse source (cache theo path).
-    /// - ENHANCE: Bổ sung attribute extraction cho Field.
+    /// - ENHANCE: Bổ sung attribute + access + modifier extraction cho Field/Property/Method.
     /// </summary>
     public class MemberProcessor : IClassProcessor
     {
@@ -72,15 +72,63 @@ namespace GaconStudio.SynapseGraph.Editor
             {
                 var pNode = new PropertyNode
                 {
+                    Access = GetPropertyAccess(prop),
+                    Modifiers = GetPropertyTraits(prop),
+                    Attributes = AnalyzerUtility.GetAttributeNames(prop),
                     Type = AnalyzerUtility.GetCleanTypeName(prop.PropertyType),
                     Name = prop.Name,
                     HasGetter = prop.CanRead,
                     HasSetter = prop.CanWrite
                 };
-                // NOTE: PropertyNode hiện chưa có field Access/Modifiers/Attributes.
-                // Nếu cần audit DI đầy đủ → sửa model ở bước 8-9.
                 node.Properties.Add(pNode);
             }
+        }
+
+        /// <summary>
+        /// Lấy access modifier của property.
+        /// Ưu tiên getter, nếu không có thì dùng setter.
+        /// </summary>
+        private static string GetPropertyAccess(PropertyInfo prop)
+        {
+            MethodInfo accessor = prop.GetMethod ?? prop.SetMethod;
+            if (accessor == null) return "private";
+            return AnalyzerUtility.GetAccessModifier(accessor);
+        }
+
+        /// <summary>
+        /// Lấy modifier của property (static, abstract, virtual, override, sealed).
+        /// Property không có IsVirtual trực tiếp → phải check qua accessor.
+        /// </summary>
+        private static List<string> GetPropertyTraits(PropertyInfo prop)
+        {
+            List<string> traits = new List<string>();
+            if (prop == null) return traits;
+
+            MethodInfo accessor = prop.GetMethod ?? prop.SetMethod;
+            if (accessor == null) return traits;
+
+            bool isInterfaceProperty = prop.DeclaringType != null && prop.DeclaringType.IsInterface;
+
+            if (accessor.IsStatic) traits.Add("static");
+
+            if (!isInterfaceProperty)
+            {
+                if (accessor.IsAbstract)
+                {
+                    traits.Add("abstract");
+                }
+                else if (accessor.GetBaseDefinition() != accessor)
+                {
+                    traits.Add("override");
+                    if (accessor.IsFinal) traits.Add("sealed");
+                }
+                else if (accessor.IsVirtual && !accessor.IsFinal)
+                {
+                    traits.Add("virtual");
+                }
+            }
+
+            return traits;
         }
 
         #endregion
@@ -105,6 +153,7 @@ namespace GaconStudio.SynapseGraph.Editor
                 {
                     Access = AnalyzerUtility.GetAccessModifier(m),
                     Modifiers = AnalyzerUtility.GetMethodTraits(m),
+                    Attributes = AnalyzerUtility.GetAttributeNames(m),
                     ReturnType = AnalyzerUtility.GetCleanTypeName(m.ReturnType),
                     Name = AnalyzerUtility.GetMethodSignature(m)
                 };
@@ -184,6 +233,7 @@ namespace GaconStudio.SynapseGraph.Editor
                 {
                     Access = AnalyzerUtility.GetAccessModifier(ctor),
                     Modifiers = new List<string>(),
+                    Attributes = AnalyzerUtility.GetAttributeNames(ctor),
                     ReturnType = "Constructor",
                     Name = classNamePure
                 };
