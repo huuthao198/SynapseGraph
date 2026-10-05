@@ -1,43 +1,69 @@
-﻿#if UNITY_EDITOR
+#if UNITY_EDITOR
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Reflection;
+using Microsoft.CodeAnalysis.CSharp;
+using Microsoft.CodeAnalysis.CSharp.Syntax;
 using GaconStudio.SynapseGraph.Runtime;
 
 namespace GaconStudio.SynapseGraph.Editor
 {
+    /// <summary>
+    /// Trích xuất Fields, Properties, Methods, Constructors từ Reflection.
+    /// 
+    /// [v2 - FIX & ENHANCE]
+    /// - FIX BUG: Không còn export implicit constructor của MonoBehaviour/ScriptableObject.
+    /// - FIX BUG: Filter constructor chính xác bằng Roslyn parse source (cache theo path).
+    /// - ENHANCE: Bổ sung attribute extraction cho Field.
+    /// </summary>
     public class MemberProcessor : IClassProcessor
     {
+        /// <summary>
+        /// Cache danh sách explicit constructor signature có trong source code.
+        /// Key: file path. Value: HashSet signature (VD: "MyClass()", "MyClass(int)").
+        /// </summary>
+        private readonly Dictionary<string, HashSet<string>> m_explicitCtorCache = new Dictionary<string, HashSet<string>>();
+
         public void Process(Type type, string path, string rawCode, ClassNode node)
         {
-            if (type.IsEnum) return;
+            if (type == null || type.IsEnum) return;
 
-            BindingFlags flags = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static | BindingFlags.DeclaredOnly;
+            BindingFlags flags = BindingFlags.Public | BindingFlags.NonPublic
+                               | BindingFlags.Instance | BindingFlags.Static
+                               | BindingFlags.DeclaredOnly;
 
             ExtractFields(type, flags, node);
             ExtractProperties(type, flags, node);
             ExtractMethods(type, flags, node);
-            ExtractConstructors(type, flags, node);
+            ExtractConstructors(type, path, rawCode, node);
         }
+
+        #region FIELDS
 
         private void ExtractFields(Type type, BindingFlags flags, ClassNode node)
         {
             var fields = type.GetFields(flags);
             foreach (var field in fields)
             {
-                if (!field.Name.Contains("<") && !field.Name.Contains("k__BackingField"))
+                // Loại bỏ backing field của auto-property
+                if (field.Name.Contains("<") || field.Name.Contains("k__BackingField")) continue;
+
+                var fNode = new FieldNode
                 {
-                    var fNode = new FieldNode
-                    {
-                        Access = AnalyzerUtility.GetAccessModifier(field),
-                        Modifiers = AnalyzerUtility.GetFieldTraits(field),
-                        Type = AnalyzerUtility.GetCleanTypeName(field.FieldType),
-                        Name = field.Name
-                    };
-                    node.Fields.Add(fNode);
-                }
+                    Access = AnalyzerUtility.GetAccessModifier(field),
+                    Modifiers = AnalyzerUtility.GetFieldTraits(field),
+                    Attributes = AnalyzerUtility.GetAttributeNames(field),
+                    Type = AnalyzerUtility.GetCleanTypeName(field.FieldType),
+                    Name = field.Name
+                };
+                node.Fields.Add(fNode);
             }
         }
+
+        #endregion
+
+        #region PROPERTIES
 
         private void ExtractProperties(Type type, BindingFlags flags, ClassNode node)
         {
@@ -51,34 +77,29 @@ namespace GaconStudio.SynapseGraph.Editor
                     HasGetter = prop.CanRead,
                     HasSetter = prop.CanWrite
                 };
+                // NOTE: PropertyNode hiện chưa có field Access/Modifiers/Attributes.
+                // Nếu cần audit DI đầy đủ → sửa model ở bước 8-9.
                 node.Properties.Add(pNode);
             }
         }
 
+        #endregion
+
+        #region METHODS
+
         private void ExtractMethods(Type type, BindingFlags flags, ClassNode node)
         {
             var methods = type.GetMethods(flags);
-            
-            Dictionary<MethodInfo, string> interfaceMapping = new Dictionary<MethodInfo, string>();
-            foreach (Type iface in type.GetInterfaces())
-            {
-                try
-                {
-                    var map = type.GetInterfaceMap(iface);
-                    for (int i = 0; i < map.TargetMethods.Length; i++)
-                    {
-                        if (!interfaceMapping.ContainsKey(map.TargetMethods[i]))
-                        {
-                            interfaceMapping.Add(map.TargetMethods[i], iface.Name);
-                        }
-                    }
-                }
-                catch { }
-            }
+
+            Dictionary<MethodInfo, string> interfaceMapping = BuildInterfaceMap(type);
 
             foreach (var m in methods)
             {
-                if (m.IsSpecialName || m.DeclaringType != type) continue;
+                // Bỏ property accessors (get_/set_), event add/remove, operator overload
+                if (m.IsSpecialName) continue;
+
+                // Bỏ method kế thừa từ base class (DeclaredOnly đã filter, double-check an toàn)
+                if (m.DeclaringType != type) continue;
 
                 var mNode = new MethodNode
                 {
@@ -106,22 +127,68 @@ namespace GaconStudio.SynapseGraph.Editor
             }
         }
 
-        private void ExtractConstructors(Type type, BindingFlags flags, ClassNode node)
+        private Dictionary<MethodInfo, string> BuildInterfaceMap(Type type)
         {
-            var constructors = type.GetConstructors(flags);
+            Dictionary<MethodInfo, string> mapping = new Dictionary<MethodInfo, string>();
+
+            foreach (Type iface in type.GetInterfaces())
+            {
+                try
+                {
+                    var map = type.GetInterfaceMap(iface);
+                    for (int i = 0; i < map.TargetMethods.Length; i++)
+                    {
+                        if (!mapping.ContainsKey(map.TargetMethods[i]))
+                        {
+                            mapping.Add(map.TargetMethods[i], iface.Name);
+                        }
+                    }
+                }
+                catch
+                {
+                    // Một số generic interface có thể throw — bỏ qua an toàn
+                }
+            }
+            return mapping;
+        }
+
+        #endregion
+
+        #region CONSTRUCTORS
+
+        private void ExtractConstructors(Type type, string path, string rawCode, ClassNode node)
+        {
+            // [FIX BUG 2] Unity class → KHÔNG có constructor thực sự.
+            // Reflection luôn trả về implicit default constructor dù source không có.
+            if (AnalyzerUtility.IsUnityClass(type)) return;
+
+            var constructors = type.GetConstructors(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+            if (constructors.Length == 0) return;
+
+            HashSet<string> explicitSignatures = GetExplicitConstructors(path, rawCode);
             string classNamePure = type.Name.Split('`')[0];
 
             foreach (var ctor in constructors)
             {
+                // Skip static constructor
+                if (ctor.IsStatic) continue;
+
+                ParameterInfo[] parameters = ctor.GetParameters();
+                string signature = BuildSignature(classNamePure, parameters);
+
+                // [FIX BUG 2] Chỉ export nếu constructor có trong source code.
+                // Nếu không match → đây là implicit default constructor → skip.
+                if (!explicitSignatures.Contains(signature)) continue;
+
                 MethodNode cNode = new MethodNode
                 {
                     Access = AnalyzerUtility.GetAccessModifier(ctor),
-                    Modifiers = ctor.IsStatic ? new List<string> { "static" } : new List<string>(),
+                    Modifiers = new List<string>(),
                     ReturnType = "Constructor",
                     Name = classNamePure
                 };
 
-                foreach (var p in ctor.GetParameters())
+                foreach (var p in parameters)
                 {
                     cNode.Parameters.Add(new ParameterNode
                     {
@@ -133,6 +200,81 @@ namespace GaconStudio.SynapseGraph.Editor
                 node.Methods.Add(cNode);
             }
         }
+
+        /// <summary>
+        /// Parse Roslyn để list signature constructor thực sự có trong source.
+        /// Cache theo path để tránh parse lại nhiều lần cho cùng file.
+        /// </summary>
+        private HashSet<string> GetExplicitConstructors(string path, string rawCode)
+        {
+            if (m_explicitCtorCache.TryGetValue(path, out var cached))
+                return cached;
+
+            HashSet<string> signatures = new HashSet<string>();
+
+            try
+            {
+                SyntaxTree tree = CSharpSyntaxTree.ParseText(rawCode);
+                var ctorDecls = tree.GetRoot().DescendantNodes()
+                    .OfType<ConstructorDeclarationSyntax>();
+
+                foreach (var ctor in ctorDecls)
+                {
+                    string className = ctor.Identifier.Text;
+                    var paramTypes = ctor.ParameterList.Parameters
+                        .Select(p => NormalizeParamType(p.Type?.ToString() ?? ""))
+                        .ToArray();
+
+                    signatures.Add(BuildSignature(className, paramTypes));
+                }
+            }
+            catch
+            {
+                // Parse fail → trả về set rỗng → sẽ skip hết constructor
+                // (an toàn hơn là export implicit constructor sai)
+            }
+
+            m_explicitCtorCache[path] = signatures;
+            return signatures;
+        }
+
+        private static string BuildSignature(string className, ParameterInfo[] parameters)
+        {
+            var types = parameters.Select(p => NormalizeParamType(p.ParameterType.Name)).ToArray();
+            return BuildSignature(className, types);
+        }
+
+        private static string BuildSignature(string className, string[] paramTypes)
+        {
+            return $"{className}({string.Join(",", paramTypes)})";
+        }
+
+        /// <summary>
+        /// Chuẩn hóa tên type để so sánh giữa Reflection và Roslyn.
+        /// VD: "Int32" (Reflection) vs "int" (Roslyn) → "int".
+        /// </summary>
+        private static string NormalizeParamType(string typeName)
+        {
+            if (string.IsNullOrEmpty(typeName)) return "";
+
+            // Bỏ generic arg
+            int idx = typeName.IndexOf('<');
+            if (idx > 0) typeName = typeName.Substring(0, idx);
+
+            switch (typeName.Trim())
+            {
+                case "Int32": return "int";
+                case "Int64": return "long";
+                case "Single": return "float";
+                case "Double": return "double";
+                case "Boolean": return "bool";
+                case "String": return "string";
+                case "Object": return "object";
+                default: return typeName.Trim();
+            }
+        }
+
+        #endregion
     }
 }
 #endif
