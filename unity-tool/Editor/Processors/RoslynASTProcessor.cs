@@ -359,13 +359,14 @@ namespace GaconStudio.SynapseGraph.Editor
         }
 
         /// <summary>
-        /// Trích xuất signal name từ argument đầu tiên.
+        /// Trích xuất signal name từ argument đầu tiên của Fire().
         /// 
         /// Priority:
-        /// 1. Literal string → value
-        /// 2. Member access (CoreEvents.LivesChanged) → full text
-        /// 3. Identifier (local const) → identifier name
-        /// 4. Invocation (GetSignal()) → skip
+        /// 1. String literal → value
+        /// 2. Object creation (new XxxSignal) → type name
+        /// 3. Member access (CoreEvents.X) → full text
+        /// 4. Identifier (local const) → identifier name
+        /// 5. Khác → null
         /// </summary>
         private string ExtractSignalName(ExpressionSyntax expr)
         {
@@ -378,24 +379,36 @@ namespace GaconStudio.SynapseGraph.Editor
                 return literal.Token.ValueText;
             }
 
-            // Pattern 2: MemberAccess (CoreEvents.LivesChanged, AppEvents.X)
+            // [FIX M3] Pattern 2: Object creation — Fire(new XxxSignal(...))
+            // Bao gồm cả object initializer: Fire(new XxxSignal { Value = 5 })
+            if (expr is ObjectCreationExpressionSyntax creation)
+            {
+                string typeName = creation.Type.ToString();
+
+                // Strip generic args nếu có (VD: MyGenericSignal<int> → MyGenericSignal)
+                int genericIdx = typeName.IndexOf('<');
+                if (genericIdx > 0)
+                {
+                    typeName = typeName.Substring(0, genericIdx);
+                }
+
+                return typeName.Replace(" ", string.Empty);
+            }
+
+            // Pattern 3: MemberAccess (CoreEvents.LivesChanged, AppEvents.X)
             if (expr is MemberAccessExpressionSyntax memberAccess)
             {
-                // Nếu là generic type arg → "Type<T>" (VD: SignalEvent<int>)
-                // Nhưng argument đầu tiên của Fire thường không phải generic type
-                // → trả về full text "CoreEvents.LivesChanged"
                 string full = memberAccess.ToString();
-                // Loại bỏ whitespace
                 return full.Replace(" ", string.Empty);
             }
 
-            // Pattern 3: Identifier (local const hoặc field)
+            // Pattern 4: Identifier (local const hoặc field)
             if (expr is IdentifierNameSyntax identifier)
             {
                 return identifier.Identifier.Text;
             }
 
-            // Pattern 4: Bỏ qua — không trace được
+            // Pattern 5: Bỏ qua — không trace được
             return null;
         }
 

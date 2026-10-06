@@ -43,26 +43,78 @@ namespace GaconStudio.SynapseGraph.Editor
             return traits;
         }
 
+        /// <summary>
+        /// [v4 - FIX NESTED-IN-GENERIC]
+        /// - FIX: Nested type trong generic class (VD: HashSet&lt;T&gt;.Enumerator) — Name không có backtick.
+        /// - FIX: Không còn Substring(0, -1) → tránh crash.
+        /// - ADD: Safety fallback khi Name không có backtick nhưng IsGenericType = true.
+        /// </summary>
         public static string GetCleanTypeName(Type type)
         {
+            return GetCleanTypeNameInternal(type, 0);
+        }
+
+        private static string GetCleanTypeNameInternal(Type type, int depth)
+        {
+            // Safety net: tránh mọi recursion vô hạn
+            if (depth > 6) return "…";
+
             if (type == null) return "null";
             if (type == typeof(void)) return "void";
 
             if (type.IsByRef) type = type.GetElementType();
 
             if (type.IsArray)
-                return GetCleanTypeName(type.GetElementType()) + "[]";
+                return GetCleanTypeNameInternal(type.GetElementType(), depth + 1) + "[]";
 
+            // Generic parameter (T, TKey...) — return ngay
+            if (type.IsGenericParameter)
+                return type.Name;
+
+            // [FIX] Lấy tên gốc an toàn — không giả định có backtick
+            string rawName = type.Name;
+            int backtickIdx = rawName.IndexOf('`');
+            bool hasBacktick = backtickIdx > 0;
+            string baseName = hasBacktick ? rawName.Substring(0, backtickIdx) : rawName;
+
+            // Generic type definition — không đệ quy generic args
+            if (type.IsGenericTypeDefinition)
+                return baseName;
+
+            // Non-generic type
             if (!type.IsGenericType)
             {
                 if (type.IsNested && type.DeclaringType != null)
-                    return $"{GetCleanTypeName(type.DeclaringType)}.{type.Name}";
-                return type.Name;
+                    return $"{GetCleanTypeNameInternal(type.DeclaringType, depth + 1)}.{rawName}";
+                return rawName;
             }
 
-            string genericName = type.Name.Substring(0, type.Name.IndexOf('`'));
-            string typeArgs = string.Join(", ", type.GetGenericArguments().Select(GetCleanTypeName));
-            return $"{genericName}<{typeArgs}>";
+            // [FIX] Nested type trong generic class (VD: HashSet<int>.Enumerator)
+            // IsGenericType = true nhưng Name KHÔNG có backtick (backtick thuộc outer)
+            if (type.IsNested && type.DeclaringType != null && !hasBacktick)
+            {
+                string declName = GetCleanTypeNameInternal(type.DeclaringType, depth + 1);
+                return $"{declName}.{rawName}";
+            }
+
+            // Generic instance (VD: List<int>, Dictionary<string, T>)
+            if (!hasBacktick)
+            {
+                // Safety fallback: rare case — IsGenericType nhưng không nested, không backtick
+                return rawName;
+            }
+
+            string typeArgs = string.Join(", ",
+                type.GetGenericArguments().Select(t => GetCleanTypeNameInternal(t, depth + 1)));
+
+            // Nested type trong generic instance có backtick (VD: Outer<T>.Nested<U>)
+            if (type.IsNested && type.DeclaringType != null)
+            {
+                string declName = GetCleanTypeNameInternal(type.DeclaringType, depth + 1);
+                return $"{declName}.{baseName}<{typeArgs}>";
+            }
+
+            return $"{baseName}<{typeArgs}>";
         }
 
         /// <summary>
